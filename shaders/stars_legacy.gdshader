@@ -36,34 +36,51 @@ float fbm(vec3 p) {
 	return v;
 }
 
-vec3 star_layer(vec3 dir, float density, float rate, float max_bright, float halo_strength, float twinkle_amt) {
+vec3 star_layer(vec3 dir, float density, float rate, float max_bright, float twinkle_amt) {
 	vec3 cell = floor(dir * density);
 	float h = hash3(cell);
 	if (h < 1.0 - rate) {
 		return vec3(0.0);
 	}
+	// star center jittered inside cell so grid never shows
 	vec3 center = (cell + 0.5 + (vec3(
 		hash3(cell + 3.0),
 		hash3(cell + 5.0),
 		hash3(cell + 9.0)) - 0.5) * 0.7) / density;
 	float d = length(normalize(center) - dir) * density;
-	float core = smoothstep(0.24, 0.0, d);
-	float halo = smoothstep(0.62, 0.0, d) * halo_strength;
-	float mag = (0.2 + 0.8 * pow(hash3(cell + 7.0), 3.0)) * max_bright;
+	float core = smoothstep(0.35, 0.0, d);
+	float halo = smoothstep(0.9, 0.0, d) * 0.15;
+	float mag = pow(hash3(cell + 7.0), 2.0) * max_bright;
 	float twinkle = 1.0 - twinkle_amt * 0.5 * (1.0 + sin(TIME * (1.0 + hash3(cell + 11.0) * 3.0) + hash3(cell) * 40.0));
 	float temp = hash3(cell + 13.0);
-	vec3 star_col = mix(vec3(0.72, 0.84, 1.0), vec3(1.0, 0.88, 0.7), temp);
+	vec3 star_col = mix(vec3(0.65, 0.8, 1.0), vec3(1.0, 0.82, 0.6), temp);
+	if (temp > 0.94) {
+		star_col = vec3(1.0, 0.55, 0.45);
+	}
 	return star_col * (core + halo) * mag * twinkle;
 }
 
 void sky() {
 	vec3 dir = EYEDIR;
-	vec3 col = vec3(0.002, 0.004, 0.009);
-	float haze = smoothstep(0.42, 0.82, fbm(dir * 2.4 + 17.0));
-	col += vec3(0.008, 0.012, 0.022) * haze;
-	col += star_layer(dir, 360.0, 0.035, 0.18, 0.015, 0.0);
-	col += star_layer(dir, 150.0, 0.018, 0.32, 0.025, 0.04);
-	col += star_layer(dir, 62.0, 0.009, 0.58, 0.04, 0.08);
+
+	// deep space base
+	vec3 col = vec3(0.004, 0.005, 0.012);
+
+	// faint nebula clouds, two hues
+	float neb1 = fbm(dir * 3.0 + 17.0);
+	float neb2 = fbm(dir * 5.0 - 42.0);
+	col += vec3(0.10, 0.05, 0.18) * pow(neb1, 3.0) * 0.9;
+	col += vec3(0.03, 0.10, 0.16) * pow(neb2, 3.5) * 0.7;
+
+	// milky-way-like band: denser glow near an arbitrary great circle
+	float band = 1.0 - abs(dot(dir, normalize(vec3(0.3, 1.0, 0.2))));
+	float band_glow = pow(band, 6.0) * fbm(dir * 8.0 + 5.0);
+	col += vec3(0.09, 0.09, 0.13) * band_glow;
+
+	// three star layers: many faint, medium, few bright twinkling
+	col += star_layer(dir, 420.0, 0.06, 0.5, 0.0);
+	col += star_layer(dir, 180.0, 0.02, 1.1, 0.25);
+	col += star_layer(dir, 70.0, 0.008, 2.2, 0.45);
 
 	COLOR = col;
 }

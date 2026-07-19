@@ -1,5 +1,10 @@
 shader_type spatial;
-render_mode unshaded;
+render_mode unshaded, shadows_disabled;
+
+uniform vec3 edge_color: source_color = vec3(1.0, 0.58, 0.08);
+uniform vec3 body_color: source_color = vec3(1.0, 0.88, 0.42);
+uniform vec3 hot_color: source_color = vec3(1.0, 0.99, 0.9);
+uniform float emission_strength: hint_range(1.0, 20.0) = 14.0;
 
 varying vec3 v_pos;
 
@@ -40,12 +45,22 @@ float fbm(vec3 p) {
 }
 
 void vertex() {
-	v_pos = VERTEX;
+	v_pos = normalize(VERTEX);
 }
 
 void fragment() {
-	float n = fbm(v_pos * 0.04 + vec3(TIME * 0.06, TIME * 0.03, 0.0));
-	vec3 col = mix(vec3(1.0, 0.35, 0.02), vec3(1.0, 0.9, 0.45), n);
-	ALBEDO = col;
-	EMISSION = col * 2.5;
+	vec3 direction = normalize(v_pos);
+	vec3 flow_a = vec3(TIME * 0.035, TIME * 0.018, -TIME * 0.024);
+	vec3 flow_b = vec3(-TIME * 0.021, TIME * 0.029, TIME * 0.016);
+	float broad = fbm(direction * 3.5 + flow_a);
+	float convection = fbm(direction * 15.0 + flow_b + broad * 2.2);
+	float filaments = fbm(direction * 32.0 - flow_a * 1.7 + convection * 1.4);
+	float heat = clamp(broad * 0.35 + convection * 0.45 + filaments * 0.35, 0.0, 1.0);
+	float facing = clamp(dot(normalize(NORMAL), VIEW), 0.0, 1.0);
+	float limb = pow(facing, 0.2);
+	vec3 color = mix(edge_color, body_color, 0.72 + 0.28 * limb);
+	color = mix(color, hot_color, 0.78 + heat * 0.16);
+	float energy = emission_strength * mix(0.94, 1.06, heat) * mix(0.94, 1.0, limb);
+	ALBEDO = color;
+	EMISSION = color * energy;
 }

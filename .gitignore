@@ -5,3 +5,5 @@ bin/
 docs/
 export_presets.cfg
 .editorconfig
+tests/
+.claude

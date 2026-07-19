@@ -1,0 +1,57 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) restrict writeonly buffer LutBuffer {
+	float data[];
+} lut;
+
+layout(push_constant, std430) uniform Params {
+	float atmosphere_radius;
+	float density_falloff;
+	uint texture_size;
+	int sample_count;
+} params;
+
+vec2 ray_sphere(float radius, vec3 origin, vec3 direction) {
+	float b = 2.0 * dot(origin, direction);
+	float c = dot(origin, origin) - radius * radius;
+	float discriminant = b * b - 4.0 * c;
+	if (discriminant > 0.0) {
+		float root = sqrt(discriminant);
+		float near_distance = max(0.0, (-b - root) * 0.5);
+		float far_distance = (-b + root) * 0.5;
+		if (far_distance >= 0.0) {
+			return vec2(near_distance, far_distance - near_distance);
+		}
+	}
+	return vec2(3.402823466e+38, 0.0);
+}
+
+float density_at(vec2 point) {
+	float height_fraction = (length(point) - 1.0) / (params.atmosphere_radius - 1.0);
+	return exp(-height_fraction * params.density_falloff) * (1.0 - height_fraction);
+}
+
+float optical_depth(vec2 origin, vec2 direction, float ray_length) {
+	float step_size = ray_length / float(params.sample_count - 1);
+	float result = 0.0;
+	for (int index = 0; index < params.sample_count; index++) {
+		result += density_at(origin) * step_size;
+		origin += direction * step_size;
+	}
+	return result;
+}
+
+void main() {
+	uvec2 id = gl_GlobalInvocationID.xy;
+	if (any(greaterThanEqual(id, uvec2(params.texture_size)))) {
+		return;
+	}
+	vec2 uv = vec2(id) / float(params.texture_size);
+	float y = -2.0 * uv.x + 1.0;
+	vec2 direction = vec2(sin(acos(y)), y);
+	vec2 origin = vec2(0.0, mix(1.0, params.atmosphere_radius, uv.y));
+	float ray_length = ray_sphere(params.atmosphere_radius, vec3(origin, 0.0), vec3(direction, 0.0)).y;
+	lut.data[id.y * params.texture_size + id.x] = optical_depth(origin + direction * 0.0001, direction, ray_length - 0.0002);
+}

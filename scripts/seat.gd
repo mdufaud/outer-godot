@@ -1,7 +1,7 @@
 extends Area3D
 
 var ship: RigidBody3D
-var prompt_text := "E : s'asseoir au poste de pilotage"
+var prompt_text := "E: Board pilot seat"
 
 
 func interact(player: Node3D) -> void:

@@ -1,13 +1,18 @@
 extends Node3D
 
 @export var radius := 120.0
-@export var surface_gravity := 20.0
-@export var death_radius := 200.0
+@export var surface_gravity := 0.2
+@export var death_radius := 180.0
+@export var initial_velocity := Vector3.ZERO
 
-var influence_radius := 2000.0
+var influence_radius := 2600.0
+var orbital_velocity := Vector3.ZERO
 
 
 func _ready() -> void:
+	add_to_group("sun")
+	add_to_group("celestial_body")
+	orbital_velocity = initial_velocity
 	var mesh := MeshInstance3D.new()
 	var sphere := SphereMesh.new()
 	sphere.radius = radius
@@ -18,14 +23,19 @@ func _ready() -> void:
 	mat.shader = preload("res://shaders/sun.gdshader")
 	sphere.material = mat
 	mesh.mesh = sphere
+	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mesh)
 
-	var light := OmniLight3D.new()
-	light.omni_range = 6000.0
-	light.omni_attenuation = 1.2
-	light.light_energy = 3.0
-	light.shadow_enabled = false
-	add_child(light)
+	var corona := MeshInstance3D.new()
+	var corona_quad := QuadMesh.new()
+	corona_quad.size = Vector2.ONE * radius * 3.4
+	var corona_mat := ShaderMaterial.new()
+	corona_mat.shader = preload("res://shaders/corona.gdshader")
+	corona_quad.material = corona_mat
+	corona.mesh = corona_quad
+	corona.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	corona.extra_cull_margin = radius * 2.0
+	add_child(corona)
 
 	var death_zone := Area3D.new()
 	var col := CollisionShape3D.new()
@@ -35,12 +45,20 @@ func _ready() -> void:
 	death_zone.add_child(col)
 	death_zone.body_entered.connect(_on_body_entered)
 	add_child(death_zone)
-
 	Gravity.register(self)
 
 
 func _exit_tree() -> void:
 	Gravity.unregister(self)
+
+
+func get_gravitational_parameter() -> float:
+	return surface_gravity * radius * radius
+
+
+func set_orbital_state(next_position: Vector3, next_velocity: Vector3) -> void:
+	global_position = next_position
+	orbital_velocity = next_velocity
 
 
 func _on_body_entered(_body: Node3D) -> void:

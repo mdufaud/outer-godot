@@ -1,0 +1,155 @@
+#version 450
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer DirectionBuffer {
+	vec4 values[];
+} directions;
+
+layout(std430, set = 0, binding = 1) writeonly buffer ShadingBuffer {
+	vec4 values[];
+} shading_data;
+
+layout(std430, set = 0, binding = 2) readonly buffer SettingBuffer {
+	vec4 values[];
+} settings;
+
+layout(std430, set = 0, binding = 3) readonly buffer PointBuffer {
+	vec4 values[];
+} points;
+
+layout(std430, set = 0, binding = 4) readonly buffer EjectaBuffer {
+	vec4 values[];
+} ejecta_craters;
+
+layout(push_constant, std430) uniform Parameters {
+	ivec4 counts;
+} parameters;
+
+vec3 mod289(vec3 value) {
+	return value - floor(value / 289.0) * 289.0;
+}
+
+vec4 mod289(vec4 value) {
+	return value - floor(value / 289.0) * 289.0;
+}
+
+vec4 permute(vec4 value) {
+	return mod289((value * 34.0 + 1.0) * value);
+}
+
+vec4 taylor_inverse_sqrt(vec4 value) {
+	return 1.79284291400159 - value * 0.85373472095314;
+}
+
+float simplex_noise(vec3 position) {
+	const vec2 coefficients = vec2(1.0 / 6.0, 1.0 / 3.0);
+	vec3 lattice = floor(position + dot(position, coefficients.yyy));
+	vec3 corner0 = position - lattice + dot(lattice, coefficients.xxx);
+	vec3 greater = step(corner0.yzx, corner0.xyz);
+	vec3 lower = 1.0 - greater;
+	vec3 corner1 = min(greater.xyz, lower.zxy);
+	vec3 corner2 = max(greater.xyz, lower.zxy);
+	vec3 position1 = corner0 - corner1 + coefficients.xxx;
+	vec3 position2 = corner0 - corner2 + coefficients.yyy;
+	vec3 position3 = corner0 - 0.5;
+	lattice = mod289(lattice);
+	vec4 permutations = permute(permute(permute(lattice.z + vec4(0.0, corner1.z, corner2.z, 1.0))
+		+ lattice.y + vec4(0.0, corner1.y, corner2.y, 1.0))
+		+ lattice.x + vec4(0.0, corner1.x, corner2.x, 1.0));
+	vec4 hashes = permutations - 49.0 * floor(permutations / 49.0);
+	vec4 x_index = floor(hashes / 7.0);
+	vec4 y_index = floor(hashes - 7.0 * x_index);
+	vec4 x = (x_index * 2.0 + 0.5) / 7.0 - 1.0;
+	vec4 y = (y_index * 2.0 + 0.5) / 7.0 - 1.0;
+	vec4 h = 1.0 - abs(x) - abs(y);
+	vec4 base0 = vec4(x.xy, y.xy);
+	vec4 base1 = vec4(x.zw, y.zw);
+	vec4 sign0 = floor(base0) * 2.0 + 1.0;
+	vec4 sign1 = floor(base1) * 2.0 + 1.0;
+	vec4 selector = -step(h, vec4(0.0));
+	vec4 adjusted0 = base0.xzyw + sign0.xzyw * selector.xxyy;
+	vec4 adjusted1 = base1.xzyw + sign1.xzyw * selector.zzww;
+	vec3 gradient0 = vec3(adjusted0.xy, h.x);
+	vec3 gradient1 = vec3(adjusted0.zw, h.y);
+	vec3 gradient2 = vec3(adjusted1.xy, h.z);
+	vec3 gradient3 = vec3(adjusted1.zw, h.w);
+	vec4 normalization = taylor_inverse_sqrt(vec4(dot(gradient0, gradient0), dot(gradient1, gradient1), dot(gradient2, gradient2), dot(gradient3, gradient3)));
+	gradient0 *= normalization.x;
+	gradient1 *= normalization.y;
+	gradient2 *= normalization.z;
+	gradient3 *= normalization.w;
+	vec4 attenuation = max(0.6 - vec4(dot(corner0, corner0), dot(position1, position1), dot(position2, position2), dot(position3, position3)), 0.0);
+	attenuation *= attenuation;
+	attenuation *= attenuation;
+	return 42.0 * dot(attenuation, vec4(dot(corner0, gradient0), dot(position1, gradient1), dot(position2, gradient2), dot(position3, gradient3)));
+}
+
+float simple_noise(vec3 position, int index) {
+	vec4 first = settings.values[index];
+	vec4 second = settings.values[index + 1];
+	vec4 third = settings.values[index + 2];
+	float sum = 0.0;
+	float amplitude = 1.0;
+	float frequency = second.z;
+	for (int layer = 0; layer < int(first.w); layer++) {
+		sum += simplex_noise(position * frequency + first.xyz) * amplitude;
+		amplitude *= second.x;
+		frequency *= second.y;
+	}
+	return sum * second.w + third.x;
+}
+
+vec4 earth_shading(vec3 position) {
+	float large_noise = simple_noise(position, 6);
+	float small_noise = simple_noise(position, 9);
+	float detail_warp = simple_noise(position, 0);
+	float detail_noise = simple_noise(position + detail_warp * 0.1, 3);
+	return vec4(large_noise, detail_noise, small_noise, 0.0);
+}
+
+float calc_sphere_noise(vec3 position) {
+	float sphere_noise = 3.402823466e+38;
+	for (int index = 0; index < parameters.counts.z; index++) {
+		vec4 point = points.values[index];
+		sphere_noise = min(sphere_noise, length(position - point.xyz) / point.w);
+	}
+	return sphere_noise;
+}
+
+vec4 moon_shading(vec3 position) {
+	vec3 domain_warp;
+	domain_warp.x = simple_noise(position, 0);
+	domain_warp.y = simple_noise(position + 100.0, 0);
+	domain_warp.z = simple_noise(position - 100.0, 0);
+	float detail_warp = simple_noise(position, 3);
+	vec3 warped_position = position + domain_warp * 0.1;
+	float sphere_noise = calc_sphere_noise(warped_position);
+	float detail_noise = simple_noise(position + detail_warp * 0.1, 6);
+	vec2 ejecta_uv = vec2(1.0);
+	float min_distance = 999.0;
+	for (int index = 0; index < parameters.counts.w; index++) {
+		vec4 crater = ejecta_craters.values[index];
+		float distance_to_crater = length(crater.xyz - position);
+		float scaled_distance = distance_to_crater / crater.w;
+		if (scaled_distance < min_distance) {
+			min_distance = scaled_distance;
+			vec3 crater_up = crater.xyz;
+			vec3 crater_forward = normalize(cross(crater_up, vec3(0.0, 1.0, 0.0)));
+			vec3 forward = normalize(cross(position, crater_up));
+			float angle_sign = sign(dot(crater_up, cross(forward, crater_forward)));
+			float angle = acos(dot(crater_forward, forward)) * angle_sign;
+			ejecta_uv = vec2(angle, scaled_distance);
+		}
+	}
+	return vec4(ejecta_uv, detail_noise, sphere_noise);
+}
+
+void main() {
+	uint index = gl_GlobalInvocationID.x;
+	if (index >= uint(parameters.counts.x)) {
+		return;
+	}
+	vec3 position = directions.values[index].xyz;
+	shading_data.values[index] = parameters.counts.y == 1 ? moon_shading(position) : earth_shading(position);
+}
