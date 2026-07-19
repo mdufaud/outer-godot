@@ -3,7 +3,7 @@
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 layout(std430, set = 0, binding = 0) readonly buffer DirectionBuffer {
-	vec4 values[];
+	float values[];
 } directions;
 
 layout(std430, set = 0, binding = 1) writeonly buffer ShadingBuffer {
@@ -150,6 +150,6 @@ void main() {
 	if (index >= uint(parameters.counts.x)) {
 		return;
 	}
-	vec3 position = directions.values[index].xyz;
+	vec3 position = vec3(directions.values[index * 3u], directions.values[index * 3u + 1u], directions.values[index * 3u + 2u]);
 	shading_data.values[index] = parameters.counts.y == 1 ? moon_shading(position) : earth_shading(position);
 }

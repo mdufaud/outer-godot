@@ -3,6 +3,9 @@ extends RefCounted
 const SHADER_PATH := "res://shaders/planet_height.comp"
 const SHADING_SHADER_PATH := "res://shaders/planet_shading.comp"
 const WORKGROUP_SIZE := 256
+
+static var _shared_pipelines: Dictionary = {}
+static var _shared_refcount := 0
 const EARTH := 0
 const MOON := 1
 const ALIEN := 2
@@ -66,17 +69,19 @@ func _init(body_kind: String, seed: int) -> void:
 
 
 func initialize() -> void:
+	_shared_refcount += 1
 	RenderingServer.call_on_render_thread(_initialize_render)
 
 
 func shutdown() -> void:
+	_shared_refcount -= 1
 	RenderingServer.call_on_render_thread(_free_render)
 
 
 func request(directions: PackedVector3Array) -> bool:
 	if _state.busy:
 		return false
-	var positions := _pack_positions(directions)
+	var positions := directions.to_byte_array()
 	if not _state.initialized:
 		_pending_positions = positions
 		_pending_count = directions.size()
@@ -99,7 +104,7 @@ func take_result() -> PackedFloat32Array:
 func request_shading(directions: PackedVector3Array) -> bool:
 	if _state.busy:
 		return false
-	var positions := _pack_positions(directions)
+	var positions := directions.to_byte_array()
 	if not _state.initialized:
 		_pending_shading_positions = positions
 		_pending_shading_count = directions.size()
@@ -148,27 +153,23 @@ func _initialize_render() -> void:
 	if _rd == null:
 		_state.error = "Planet height generation requires Forward+ or Mobile rendering."
 		return
-	var source := RDShaderSource.new()
-	source.source_compute = FileAccess.get_file_as_string(SHADER_PATH)
-	var spirv := _rd.shader_compile_spirv_from_source(source, true)
-	if not spirv.compile_error_compute.is_empty():
-		_state.error = spirv.compile_error_compute
+	var height_pipeline := _shared_pipeline(SHADER_PATH)
+	if height_pipeline.has("error"):
+		_state.error = height_pipeline.error
 		return
-	_shader = _rd.shader_create_from_spirv(spirv)
-	_pipeline = _rd.compute_pipeline_create(_shader)
+	_shader = height_pipeline.shader
+	_pipeline = height_pipeline.pipeline
 	_settings_buffer = _rd.storage_buffer_create(_settings_bytes.size(), _settings_bytes)
 	var crater_data := _crater_bytes
 	if crater_data.is_empty():
 		crater_data.resize(32)
 	_crater_buffer = _rd.storage_buffer_create(crater_data.size(), crater_data)
-	var shading_source := RDShaderSource.new()
-	shading_source.source_compute = FileAccess.get_file_as_string(SHADING_SHADER_PATH)
-	var shading_spirv := _rd.shader_compile_spirv_from_source(shading_source, true)
-	if not shading_spirv.compile_error_compute.is_empty():
-		_state.error = shading_spirv.compile_error_compute
+	var shading_pipeline := _shared_pipeline(SHADING_SHADER_PATH)
+	if shading_pipeline.has("error"):
+		_state.error = shading_pipeline.error
 		return
-	_shading_shader = _rd.shader_create_from_spirv(shading_spirv)
-	_shading_pipeline = _rd.compute_pipeline_create(_shading_shader)
+	_shading_shader = shading_pipeline.shader
+	_shading_pipeline = shading_pipeline.pipeline
 	_shading_settings_buffer = _rd.storage_buffer_create(_shading_settings_bytes.size(), _shading_settings_bytes)
 	var point_data := _moon_points_bytes
 	if point_data.is_empty():
@@ -195,6 +196,20 @@ func _initialize_render() -> void:
 		_generate_shading_render(shading_positions, shading_count)
 
 
+func _shared_pipeline(path: String) -> Dictionary:
+	if _shared_pipelines.has(path):
+		return _shared_pipelines[path]
+	var source := RDShaderSource.new()
+	source.source_compute = FileAccess.get_file_as_string(path)
+	var spirv := _rd.shader_compile_spirv_from_source(source, true)
+	if not spirv.compile_error_compute.is_empty():
+		return {"error": spirv.compile_error_compute}
+	var shader := _rd.shader_create_from_spirv(spirv)
+	var entry := {"shader": shader, "pipeline": _rd.compute_pipeline_create(shader)}
+	_shared_pipelines[path] = entry
+	return entry
+
+
 func _generate_render(positions: PackedByteArray, count: int) -> void:
 	_release_request_resources()
 	_positions_buffer = _rd.storage_buffer_create(positions.size(), positions)
@@ -212,9 +227,10 @@ func _generate_render(positions: PackedByteArray, count: int) -> void:
 	_rd.compute_list_set_push_constant(command_list, constants, constants.size())
 	_rd.compute_list_dispatch(command_list, ceili(float(count) / float(WORKGROUP_SIZE)), 1, 1)
 	_rd.compute_list_end()
-	_state.result = _rd.buffer_get_data(_heights_buffer).to_float32_array()
+	var result := _rd.buffer_get_data(_heights_buffer).to_float32_array()
 	_release_request_resources()
 	_state.busy = false
+	_state.result = result
 
 
 func _generate_shading_render(positions: PackedByteArray, count: int) -> void:
@@ -236,9 +252,10 @@ func _generate_shading_render(positions: PackedByteArray, count: int) -> void:
 	_rd.compute_list_set_push_constant(command_list, constants, constants.size())
 	_rd.compute_list_dispatch(command_list, ceili(float(count) / float(WORKGROUP_SIZE)), 1, 1)
 	_rd.compute_list_end()
-	_state.shading_result = _rd.buffer_get_data(_shading_data_buffer).to_float32_array()
+	var result := _rd.buffer_get_data(_shading_data_buffer).to_float32_array()
 	_release_shading_request_resources()
 	_state.busy = false
+	_state.shading_result = result
 
 
 func _free_render() -> void:
@@ -246,7 +263,7 @@ func _free_render() -> void:
 		return
 	_release_request_resources()
 	_release_shading_request_resources()
-	for resource in [_ejecta_craters_buffer, _moon_points_buffer, _shading_settings_buffer, _shading_pipeline, _shading_shader, _crater_buffer, _settings_buffer, _pipeline, _shader]:
+	for resource in [_ejecta_craters_buffer, _moon_points_buffer, _shading_settings_buffer, _crater_buffer, _settings_buffer]:
 		if resource.is_valid():
 			_rd.free_rid(resource)
 	_ejecta_craters_buffer = RID()
@@ -259,6 +276,12 @@ func _free_render() -> void:
 	_pipeline = RID()
 	_shader = RID()
 	_state.initialized = false
+	if _shared_refcount <= 0:
+		for entry in _shared_pipelines.values():
+			for resource in [entry.pipeline, entry.shader]:
+				if resource.is_valid():
+					_rd.free_rid(resource)
+		_shared_pipelines.clear()
 
 
 func _release_request_resources() -> void:
@@ -293,18 +316,6 @@ func _buffer_uniform(resource: RID, binding: int) -> RDUniform:
 	uniform.binding = binding
 	uniform.add_id(resource)
 	return uniform
-
-
-func _pack_positions(directions: PackedVector3Array) -> PackedByteArray:
-	var values := PackedFloat32Array()
-	values.resize(directions.size() * 4)
-	for index in directions.size():
-		var direction := directions[index]
-		var offset := index * 4
-		values[offset] = direction.x
-		values[offset + 1] = direction.y
-		values[offset + 2] = direction.z
-	return values.to_byte_array()
 
 
 func _build_settings() -> void:
@@ -777,8 +788,8 @@ func _simplex_noise(position: Vector3) -> float:
 	lattice = _mod289_vector3(lattice)
 	var permutations := _permute_vector4(_permute_vector4(_permute_vector4(
 		Vector4(lattice.z, lattice.z + corner1.z, lattice.z + corner2.z, lattice.z + 1.0)
-		+ Vector4(lattice.y, lattice.y + corner1.y, lattice.y + corner2.y, lattice.y + 1.0)
-	) + Vector4(lattice.x, lattice.x + corner1.x, lattice.x + corner2.x, lattice.x + 1.0)))
+	) + Vector4(lattice.y, lattice.y + corner1.y, lattice.y + corner2.y, lattice.y + 1.0)
+	) + Vector4(lattice.x, lattice.x + corner1.x, lattice.x + corner2.x, lattice.x + 1.0))
 	var hashes := permutations - _floor_vector4(permutations / 49.0) * 49.0
 	var x_index := _floor_vector4(hashes / 7.0)
 	var y_index := _floor_vector4(hashes - x_index * 7.0)

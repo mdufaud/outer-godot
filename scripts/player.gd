@@ -12,6 +12,7 @@ const PLAYER_HALF_HEIGHT := 0.8
 const GROUND_COLLISION_MARGIN := 0.35
 const GROUND_SNAP_DISTANCE := 0.5
 const GROUND_LERP := 10.0
+const FLOOR_MAX_ANGLE := 65.0
 const MOUSE_SENS := 0.002
 const ALIGN_SPEED := 8.0
 
@@ -29,6 +30,7 @@ func _ready() -> void:
 	collision_mask |= 2
 	safe_margin = 0.05
 	floor_snap_length = GROUND_SNAP_DISTANCE
+	floor_max_angle = deg_to_rad(FLOOR_MAX_ANGLE)
 	platform_on_leave = CharacterBody3D.PLATFORM_ON_LEAVE_DO_NOTHING
 	platform_floor_layers = 0
 	platform_wall_layers = 0
@@ -159,14 +161,19 @@ func ensure_surface_clearance(clearance := GROUND_COLLISION_MARGIN) -> void:
 		_place_above_surface(source, clearance)
 
 
+func _surface_radius(source: Node3D, direction: Vector3) -> float:
+	if source.has_method("get_collider_surface_radius"):
+		return source.get_collider_surface_radius(direction)
+	return source.get_surface_radius_towards(direction)
+
+
 func _ground_clearance(source: Node3D) -> float:
 	if source == null or not source.has_method("get_surface_radius_towards"):
 		return INF
 	var direction := global_position - source.global_position
 	if direction.length_squared() < 0.0001:
 		return INF
-	var surface_radius: float = source.get_surface_radius_towards(direction.normalized())
-	return direction.length() - surface_radius - PLAYER_HALF_HEIGHT
+	return direction.length() - _surface_radius(source, direction.normalized()) - PLAYER_HALF_HEIGHT
 
 
 func _place_above_surface(source: Node3D, clearance := GROUND_COLLISION_MARGIN) -> void:
@@ -176,7 +183,7 @@ func _place_above_surface(source: Node3D, clearance := GROUND_COLLISION_MARGIN) 
 	if direction.length_squared() < 0.0001:
 		return
 	var unit_direction := direction.normalized()
-	var surface_radius: float = source.get_surface_radius_towards(unit_direction)
+	var surface_radius := _surface_radius(source, unit_direction)
 	global_position = source.global_position + unit_direction * (surface_radius + PLAYER_HALF_HEIGHT + clearance)
 
 

@@ -133,6 +133,11 @@ func _wait_for_bodies(bodies: Array) -> void:
 		var progress := 0.0
 		var ready_count := 0
 		for body in bodies:
+			var generator_error := String(body.call("get_generator_error"))
+			if not generator_error.is_empty():
+				_loading_label.text = generator_error
+				push_error(generator_error)
+				return
 			progress += float(body.call("get_boot_progress"))
 			if body.call("is_boot_ready"):
 				ready_count += 1

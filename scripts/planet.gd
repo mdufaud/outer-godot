@@ -8,9 +8,10 @@ const MoonNoiseTexture := preload("res://assets/planet_textures/moon_noise.png")
 const CraterEjectaTexture := preload("res://assets/planet_textures/crater_ejecta_ray.png")
 const MoonFlatNormalTexture := preload("res://assets/planet_textures/moon_normal_flat.png")
 const MoonSteepNormalTexture := preload("res://assets/planet_textures/moon_normal_steep.png")
-const MESH_CACHE_VERSION := 1
+const MESH_CACHE_VERSION := 3
 
 static var _topology_cache: Dictionary = {}
+static var _topology_mutex := Mutex.new()
 
 @export_enum("earth", "moon", "alien", "shattered", "moat", "fiery_twin", "icey_twin", "cyclops", "tumbling_bean", "watchful_eye") var body_kind := "earth"
 @export_enum("terrain", "lava", "ice") var surface_style := "terrain"
@@ -57,16 +58,11 @@ var _atmosphere_lut_bound := false
 var _height_generator: RefCounted
 var _height_generator_initialized := false
 var _lod_resolutions: Array[int] = []
-var _next_lod_request := 0
 var _active_lod := -1
-var _pending_factors := PackedFloat32Array()
-var _pending_resolution := -1
 var _terrain_height_minmax := Vector2.ONE
-var _has_terrain_height_minmax := false
-var _collision_task_id := -1
-var _collision_task_resolution := -1
-var _collision_factors := PackedFloat32Array()
+var _boot_jobs: Array[Dictionary] = []
 var _collision_ready := false
+var _collider_peak_radius := 0.0
 
 
 func _ready() -> void:
@@ -79,6 +75,11 @@ func _ready() -> void:
 	_build_collision()
 	_build_ocean()
 	_build_atmosphere()
+	for job in _boot_jobs:
+		if job.phase == "topology":
+			_height_generator.initialize()
+			_height_generator_initialized = true
+			break
 	Gravity.register(self)
 
 
@@ -91,8 +92,7 @@ func _exit_tree() -> void:
 
 
 func _process(_delta: float) -> void:
-	_poll_collision_generation()
-	_poll_terrain_generation()
+	_poll_boot()
 	_poll_atmosphere_lut()
 	_update_lod()
 	_update_lighting()
@@ -131,9 +131,34 @@ func set_orbital_state(next_position: Vector3, next_velocity: Vector3) -> void:
 	orbital_velocity = next_velocity
 
 
+func get_collider_surface_radius(direction: Vector3) -> float:
+	# The analytic sample_factor runs in float64 while the mesh comes from the
+	# float32 compute shader, so they disagree by metres on high frequency
+	# terrain. Placement must use the shape bodies actually collide against.
+	var unit_direction := direction.normalized()
+	var fallback := get_surface_radius_towards(unit_direction)
+	if not _collision_ready or not is_inside_tree():
+		return fallback
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return fallback
+	# Start clear of the highest peak: deformed bodies such as Tumbling Bean
+	# reach well past twice their nominal radius, and backface_collision would
+	# make a ray that starts inside the mesh report the far wall.
+	var query := PhysicsRayQueryParameters3D.create(
+		global_position + unit_direction * (_collider_peak_radius + 1.0),
+		global_position
+	)
+	query.collision_mask = collision_layer
+	var hit := space.intersect_ray(query)
+	if hit.is_empty() or hit.collider != self:
+		return fallback
+	return global_position.distance_to(hit.position)
+
+
 func get_landing_point(direction: Vector3, clearance := 0.0) -> Vector3:
 	var unit_direction := direction.normalized()
-	return global_position + unit_direction * (get_surface_radius_towards(unit_direction) + clearance)
+	return global_position + unit_direction * (get_collider_surface_radius(unit_direction) + clearance)
 
 
 func get_sunlit_spawn_direction(sun_position: Vector3) -> Vector3:
@@ -156,6 +181,8 @@ func get_sunlit_spawn_direction(sun_position: Vector3) -> Vector3:
 		if _is_moon_profile():
 			score -= _height_generator.sample_shading_data(direction).w * 0.1
 		if score <= best_score:
+			continue
+		if has_ocean and _collider_height_for(direction) <= ocean_level + 0.7:
 			continue
 		best_score = score
 		best_direction = direction
@@ -187,7 +214,7 @@ func get_nearby_land_direction(origin: Vector3) -> Vector3:
 	for _attempt in 256:
 		var offset := tangent_a * rng.randf_range(-0.22, 0.22) + tangent_b * rng.randf_range(-0.22, 0.22)
 		var direction := (origin + offset).normalized()
-		if origin.angle_to(direction) * radius >= 8.0 and _height_for(direction) > ocean_level + 0.7:
+		if origin.angle_to(direction) * radius >= 8.0 and _collider_height_for(direction) > ocean_level + 0.7:
 			return direction
 	return origin
 
@@ -223,65 +250,105 @@ func _build_terrain() -> void:
 		_restore_terrain_properties(_lod_meshes[0])
 		_set_lod(0)
 		return
-	_height_generator.initialize()
-	_height_generator_initialized = true
-	_request_next_lod()
+	for resolution in _lod_resolutions:
+		_boot_jobs.append({"kind": "lod", "resolution": resolution, "phase": "topology"})
 
 
 func _build_collision() -> void:
 	var profile := PlanetQualityScript.get_profile(quality_profile)
 	var resolution := int(profile.collision)
+	var job := {"kind": "collision", "resolution": resolution, "phase": "topology"}
 	_collision_mesh = _load_cached_mesh("collision", resolution)
 	if _collision_mesh != null:
-		_install_collision(_collision_mesh)
+		job.mesh = _collision_mesh
+		job.phase = "build"
+	_boot_jobs.push_front(job)
+
+
+func _poll_boot() -> void:
+	if _boot_jobs.is_empty():
 		return
-	var topology := _topology_for(resolution)
-	_collision_task_resolution = resolution
-	_collision_task_id = WorkerThreadPool.add_task(
-		_generate_collision_factors.bind(topology.directions),
-		false,
-		"Generate %s collision" % name
-	)
+	var job: Dictionary = _boot_jobs[0]
+	match String(job.phase):
+		"topology":
+			job.task_id = WorkerThreadPool.add_task(_build_topology_task.bind(int(job.resolution)), false, "Topology %s %d" % [name, job.resolution])
+			job.phase = "topology_wait"
+		"topology_wait":
+			if WorkerThreadPool.is_task_completed(int(job.task_id)):
+				WorkerThreadPool.wait_for_task_completion(int(job.task_id))
+				job.phase = "heights"
+		"heights":
+			if _height_generator.request(_topology_for(int(job.resolution)).directions):
+				job.phase = "heights_wait"
+		"heights_wait":
+			if _height_generator.has_result():
+				job.factors = _height_generator.take_result()
+				job.phase = "shading" if job.kind == "lod" else "build"
+		"shading":
+			if _height_generator.request_shading(_topology_for(int(job.resolution)).directions):
+				job.phase = "shading_wait"
+		"shading_wait":
+			if _height_generator.has_shading_result():
+				job.shading = _height_generator.take_shading_result()
+				job.phase = "build"
+		"build":
+			job.task_id = WorkerThreadPool.add_task(_run_build_job.bind(job), false, "Build %s %s" % [name, job.kind])
+			job.phase = "build_wait"
+		"build_wait":
+			if WorkerThreadPool.is_task_completed(int(job.task_id)):
+				WorkerThreadPool.wait_for_task_completion(int(job.task_id))
+				_finish_build_job(job)
+				_boot_jobs.pop_front()
 
 
-func _generate_collision_factors(directions: PackedVector3Array) -> void:
-	var generator := PlanetHeightGeneratorScript.new(body_kind, rng_seed)
-	var factors := PackedFloat32Array()
-	factors.resize(directions.size())
-	for index in directions.size():
-		factors[index] = generator.sample_factor(directions[index])
-	_collision_factors = factors
+static func _build_topology_task(resolution: int) -> void:
+	_topology_for(resolution)
 
 
-func _poll_collision_generation() -> void:
-	if _collision_task_id < 0 or not WorkerThreadPool.is_task_completed(_collision_task_id):
+func _run_build_job(job: Dictionary) -> void:
+	if job.kind == "collision":
+		var mesh: ArrayMesh = job.get("mesh")
+		if mesh == null:
+			mesh = _build_mesh_from_factors(int(job.resolution), job.factors, PackedFloat32Array())
+			_save_cached_mesh(mesh, "collision", int(job.resolution))
+			job.mesh = mesh
+			_collision_mesh = mesh
+		var arrays := mesh.surface_get_arrays(0)
+		var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+		var faces := PackedVector3Array()
+		faces.resize(indices.size())
+		for index in indices.size():
+			faces[index] = vertices[indices[index]]
+		# The terrain mesh is watertight and bodies always stay outside it.
+		# Backface collision lets the solver depenetrate a capsule wedged in a
+		# narrow notch towards the far side of a triangle, which catapults it.
+		var shape := ConcavePolygonShape3D.new()
+		shape.backface_collision = true
+		shape.set_faces(faces)
+		job.shape = shape
+		var peak := 0.0
+		for vertex in vertices:
+			peak = maxf(peak, vertex.length())
+		job.peak = peak
 		return
-	WorkerThreadPool.wait_for_task_completion(_collision_task_id)
-	_collision_mesh = _build_mesh_from_factors(_collision_task_resolution, _collision_factors, PackedFloat32Array())
-	_save_cached_mesh(_collision_mesh, "collision", _collision_task_resolution)
-	_install_collision(_collision_mesh)
-	_collision_factors = PackedFloat32Array()
-	_collision_task_id = -1
-	_collision_task_resolution = -1
+	var lod_mesh := _build_mesh_from_factors(int(job.resolution), job.factors, job.shading)
+	_save_cached_mesh(lod_mesh, "terrain", int(job.resolution))
+	job.mesh = lod_mesh
 
 
-func _install_collision(mesh: ArrayMesh) -> void:
-	var arrays := mesh.surface_get_arrays(0)
-	var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-	var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
-	var faces := PackedVector3Array()
-	faces.resize(indices.size())
-	for index in range(0, indices.size(), 3):
-		faces[index] = vertices[indices[index]]
-		faces[index + 1] = vertices[indices[index + 1]]
-		faces[index + 2] = vertices[indices[index + 2]]
-	var shape := ConcavePolygonShape3D.new()
-	shape.backface_collision = true
-	shape.set_faces(faces)
-	var collision := CollisionShape3D.new()
-	collision.shape = shape
-	add_child(collision)
-	_collision_ready = true
+func _finish_build_job(job: Dictionary) -> void:
+	if job.kind == "collision":
+		var collision := CollisionShape3D.new()
+		collision.shape = job.shape
+		add_child(collision)
+		_collider_peak_radius = float(job.peak)
+		_collision_ready = true
+		return
+	_lod_meshes.append(job.mesh)
+	if _lod_meshes.size() == 1:
+		_restore_terrain_properties(job.mesh)
+		_set_lod(0)
 
 
 func _build_ocean() -> void:
@@ -386,50 +453,20 @@ func _update_lighting() -> void:
 		_atmosphere_material.set_shader_parameter("sun_direction", direction)
 
 
-func _request_next_lod() -> void:
-	if _next_lod_request >= _lod_resolutions.size() or _height_generator == null:
-		return
-	var topology := _topology_for(_lod_resolutions[_next_lod_request])
-	_height_generator.request(topology.directions)
-
-
-func _poll_terrain_generation() -> void:
-	if _height_generator == null:
-		return
-	if _pending_resolution >= 0 and _height_generator.has_shading_result():
-		var shading_data: PackedFloat32Array = _height_generator.take_shading_result()
-		var mesh := _build_mesh_from_factors(_pending_resolution, _pending_factors, shading_data)
-		_save_cached_mesh(mesh, "terrain", _pending_resolution)
-		_lod_meshes.append(mesh)
-		_pending_factors = PackedFloat32Array()
-		_pending_resolution = -1
-		_next_lod_request += 1
-		_set_lod(_active_lod if _active_lod >= 0 else 0)
-		_request_next_lod()
-		return
-	if _pending_resolution >= 0 or not _height_generator.has_result():
-		return
-	_pending_factors = _height_generator.take_result()
-	_pending_resolution = _lod_resolutions[_next_lod_request]
-	var topology := _topology_for(_pending_resolution)
-	_height_generator.request_shading(topology.directions)
-
-
-func _build_cpu_mesh(resolution: int) -> ArrayMesh:
-	var topology := _topology_for(resolution)
-	var directions: PackedVector3Array = topology.directions
-	var factors := PackedFloat32Array()
-	factors.resize(directions.size())
-	for index in directions.size():
-		factors[index] = _height_generator.sample_factor(directions[index])
-	return _build_mesh_from_factors(resolution, factors, PackedFloat32Array())
+func get_generator_error() -> String:
+	return String(_height_generator.get_error()) if _height_generator != null else ""
 
 
 func _load_cached_mesh(purpose: String, resolution: int) -> ArrayMesh:
 	var path := _mesh_cache_path(purpose, resolution)
 	if not ResourceLoader.exists(path):
 		return null
-	return load(path) as ArrayMesh
+	var mesh := load(path) as ArrayMesh
+	if mesh == null:
+		return null
+	if purpose == "terrain" and not mesh.has_meta("height_minmax"):
+		return null
+	return mesh
 
 
 func _save_cached_mesh(mesh: ArrayMesh, purpose: String, resolution: int) -> void:
@@ -450,28 +487,8 @@ func _mesh_cache_path(purpose: String, resolution: int) -> String:
 
 
 func _restore_terrain_properties(mesh: ArrayMesh) -> void:
-	var arrays := mesh.surface_get_arrays(0)
-	var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-	var uv: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
-	var uv2: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV2]
-	if vertices.is_empty() or uv.size() != vertices.size() or uv2.size() != vertices.size():
-		return
-	var shading_data := PackedFloat32Array()
-	shading_data.resize(vertices.size() * 4)
-	var minimum_factor := vertices[0].length() / radius
-	var maximum_factor := minimum_factor
-	for index in vertices.size():
-		var factor := vertices[index].length() / radius
-		minimum_factor = minf(minimum_factor, factor)
-		maximum_factor = maxf(maximum_factor, factor)
-		var offset := index * 4
-		shading_data[offset] = uv[index].x
-		shading_data[offset + 1] = uv[index].y
-		shading_data[offset + 2] = uv2[index].x
-		shading_data[offset + 3] = uv2[index].y
-	_terrain_height_minmax = Vector2(minimum_factor, maximum_factor)
-	_has_terrain_height_minmax = true
-	_set_terrain_properties(shading_data)
+	_terrain_height_minmax = mesh.get_meta("height_minmax", Vector2.ONE)
+	_set_terrain_properties(float(mesh.get_meta("average_biome", 0.0)))
 
 
 func _build_mesh_from_factors(resolution: int, factors: PackedFloat32Array, shading_data: PackedFloat32Array) -> ArrayMesh:
@@ -479,57 +496,65 @@ func _build_mesh_from_factors(resolution: int, factors: PackedFloat32Array, shad
 	var directions: PackedVector3Array = topology.directions
 	assert(factors.size() == directions.size())
 	assert(shading_data.is_empty() or shading_data.size() == directions.size() * 4)
-	if not _has_terrain_height_minmax and not shading_data.is_empty():
-		var minimum_factor := factors[0]
-		var maximum_factor := factors[0]
-		for factor in factors:
-			minimum_factor = minf(minimum_factor, factor)
-			maximum_factor = maxf(maximum_factor, factor)
-		_terrain_height_minmax = Vector2(minimum_factor, maximum_factor)
-		_has_terrain_height_minmax = true
-	var indices := PackedInt32Array()
-	indices.append_array(topology.indices)
 	var shaped_vertices := PackedVector3Array()
-	var terrain_uv := PackedVector2Array()
-	var terrain_uv2 := PackedVector2Array()
+	shaped_vertices.resize(directions.size())
 	for index in directions.size():
-		var direction := directions[index]
-		var factor := factors[index]
-		shaped_vertices.append(direction * radius * factor)
-		if not shading_data.is_empty():
-			var offset := index * 4
-			terrain_uv.append(Vector2(shading_data[offset], shading_data[offset + 1]))
-			terrain_uv2.append(Vector2(shading_data[offset + 2], shading_data[offset + 3]))
-	_orient_clockwise(shaped_vertices, indices)
+		shaped_vertices[index] = directions[index] * (radius * factors[index])
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = shaped_vertices
-	var normals := _calculate_normals(shaped_vertices, indices)
-	var tangents := PackedFloat32Array()
-	tangents.resize(normals.size() * 4)
-	for index in normals.size():
-		var normal := normals[index]
-		var offset := index * 4
-		tangents[offset] = -normal.z
-		tangents[offset + 1] = 0.0
-		tangents[offset + 2] = normal.x
-		tangents[offset + 3] = 1.0
-	arrays[Mesh.ARRAY_NORMAL] = normals
-	arrays[Mesh.ARRAY_TANGENT] = tangents
-	if not shading_data.is_empty():
-		arrays[Mesh.ARRAY_TEX_UV] = terrain_uv
-		arrays[Mesh.ARRAY_TEX_UV2] = terrain_uv2
-	arrays[Mesh.ARRAY_INDEX] = indices
+	arrays[Mesh.ARRAY_INDEX] = topology.indices
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	if not shading_data.is_empty():
-		_set_terrain_properties(shading_data)
-	return mesh
+	if shading_data.is_empty():
+		return mesh
+	var tool := SurfaceTool.new()
+	tool.create_from(mesh, 0)
+	tool.generate_normals()
+	var shaded_mesh := tool.commit()
+	var shaded_arrays := shaded_mesh.surface_get_arrays(0)
+	var normals: PackedVector3Array = shaded_arrays[Mesh.ARRAY_NORMAL]
+	var tangents := PackedFloat32Array()
+	tangents.resize(normals.size() * 4)
+	var terrain_uv := PackedVector2Array()
+	var terrain_uv2 := PackedVector2Array()
+	terrain_uv.resize(directions.size())
+	terrain_uv2.resize(directions.size())
+	var minimum_factor := factors[0]
+	var maximum_factor := factors[0]
+	var biome_sum := 0.0
+	for index in directions.size():
+		var offset := index * 4
+		terrain_uv[index] = Vector2(shading_data[offset], shading_data[offset + 1])
+		terrain_uv2[index] = Vector2(shading_data[offset + 2], shading_data[offset + 3])
+		biome_sum += shading_data[offset + 3]
+		minimum_factor = minf(minimum_factor, factors[index])
+		maximum_factor = maxf(maximum_factor, factors[index])
+		var normal := normals[index]
+		tangents[offset] = -normal.z
+		tangents[offset + 2] = normal.x
+		tangents[offset + 3] = 1.0
+	var final_arrays := []
+	final_arrays.resize(Mesh.ARRAY_MAX)
+	final_arrays[Mesh.ARRAY_VERTEX] = shaded_arrays[Mesh.ARRAY_VERTEX]
+	final_arrays[Mesh.ARRAY_NORMAL] = normals
+	final_arrays[Mesh.ARRAY_TANGENT] = tangents
+	final_arrays[Mesh.ARRAY_TEX_UV] = terrain_uv
+	final_arrays[Mesh.ARRAY_TEX_UV2] = terrain_uv2
+	final_arrays[Mesh.ARRAY_INDEX] = shaded_arrays[Mesh.ARRAY_INDEX]
+	var final_mesh := ArrayMesh.new()
+	final_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, final_arrays)
+	final_mesh.set_meta("height_minmax", Vector2(minimum_factor, maximum_factor))
+	final_mesh.set_meta("average_biome", biome_sum / maxf(float(directions.size()), 1.0))
+	return final_mesh
 
 
 static func _topology_for(resolution: int) -> Dictionary:
+	_topology_mutex.lock()
 	if _topology_cache.has(resolution):
-		return _topology_cache[resolution]
+		var cached: Dictionary = _topology_cache[resolution]
+		_topology_mutex.unlock()
+		return cached
 	var divisions := maxi(resolution, 0)
 	var vertices := PackedVector3Array([
 		Vector3(0.0, 1.0, 0.0), Vector3(-1.0, 0.0, 0.0), Vector3(0.0, 0.0, -1.0),
@@ -561,8 +586,10 @@ static func _topology_for(resolution: int) -> Dictionary:
 			triplet_index / 3 >= 4,
 			divisions
 		)
+	_orient_clockwise(vertices, indices)
 	var topology := {"directions": vertices, "indices": indices}
 	_topology_cache[resolution] = topology
+	_topology_mutex.unlock()
 	return topology
 
 
@@ -613,27 +640,7 @@ static func _orient_clockwise(vertices: PackedVector3Array, indices: PackedInt32
 			indices[index + 2] = swap
 
 
-static func _calculate_normals(vertices: PackedVector3Array, indices: PackedInt32Array) -> PackedVector3Array:
-	var normals := PackedVector3Array()
-	normals.resize(vertices.size())
-	for index in normals.size():
-		normals[index] = Vector3.ZERO
-	for index in range(0, indices.size(), 3):
-		var a := indices[index]
-		var b := indices[index + 1]
-		var c := indices[index + 2]
-		var face_normal := (vertices[b] - vertices[a]).cross(vertices[c] - vertices[a])
-		if face_normal.dot(vertices[a] + vertices[b] + vertices[c]) < 0.0:
-			face_normal = -face_normal
-		normals[a] += face_normal
-		normals[b] += face_normal
-		normals[c] += face_normal
-	for index in normals.size():
-		normals[index] = normals[index].normalized()
-	return normals
-
-
-func _set_terrain_properties(shading_data: PackedFloat32Array) -> void:
+func _set_terrain_properties(average_biome: float) -> void:
 	if surface_style != "terrain":
 		return
 	_surface_material.set_shader_parameter("body_kind", 1 if _is_moon_profile() else 0)
@@ -663,10 +670,7 @@ func _set_terrain_properties(shading_data: PackedFloat32Array) -> void:
 	_surface_material.set_shader_parameter("moon_biome_warp_strength", 6.08)
 	_surface_material.set_shader_parameter("moon_random_biome_values", Vector4(-4.41, 0.0, -1.18, 5.65))
 	_apply_reference_palette()
-	var biome_sum := 0.0
-	for index in range(3, shading_data.size(), 4):
-		biome_sum += shading_data[index]
-	_surface_material.set_shader_parameter("moon_average_biome_noise", biome_sum / maxf(float(shading_data.size() / 4), 1.0))
+	_surface_material.set_shader_parameter("moon_average_biome_noise", average_biome)
 
 
 func _apply_reference_palette() -> void:
@@ -696,6 +700,10 @@ func _apply_reference_palette() -> void:
 
 func _is_moon_profile() -> bool:
 	return body_kind == "moon" or body_kind == "tumbling_bean" or body_kind == "watchful_eye"
+
+
+func _collider_height_for(direction: Vector3) -> float:
+	return get_collider_surface_radius(direction) - radius
 
 
 func _height_for(direction: Vector3) -> float:
