@@ -8,6 +8,7 @@ uniform sampler2D baked_optical_depth : filter_linear, repeat_disable;
 uniform vec3 planet_center = vec3(0.0);
 uniform float planet_radius = 46.0;
 uniform float atmosphere_radius = 60.812;
+uniform vec3 atmosphere_color : source_color = vec3(1.0);
 uniform vec3 sun_direction = vec3(-1.0, 0.0, 0.0);
 uniform int in_scattering_points = 10;
 uniform vec3 scattering_coefficients = vec3(2.26359, 6.88789, 12.1383);
@@ -71,6 +72,7 @@ vec3 calculate_light(vec3 origin, vec3 direction, float ray_length, vec3 origina
 		point += direction * step_size;
 	}
 	in_scattered_light *= scattering_coefficients * intensity * step_size / planet_radius;
+	in_scattered_light *= atmosphere_color;
 	const float brightness_adaptation_strength = 0.15;
 	const float reflected_light_out_scatter_strength = 3.0;
 	float brightness_adaptation = dot(in_scattered_light, vec3(1.0)) * brightness_adaptation_strength;

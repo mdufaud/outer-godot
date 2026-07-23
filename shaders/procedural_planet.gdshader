@@ -47,6 +47,7 @@ uniform vec3 glacier_col_ambient : source_color = vec3(0.42, 0.50, 0.60);
 uniform float glacier_height_min = 20.0;
 uniform float glacier_height_max = 29.0;
 uniform float glacier_height_bands = 9.0;
+uniform vec3 cyclops_core_color : source_color = vec3(0.08, 1.0, 0.72);
 
 varying vec4 terrain_data;
 varying vec3 terrain_vertex;
@@ -127,7 +128,7 @@ void fragment() {
 		ROUGHNESS = 1.0;
 		SPECULAR = 0.0;
 	} else if (body_kind == 3) {
-		float glacier_height01 = remap01(length(terrain_vertex), glacier_height_min, glacier_height_max);
+		float glacier_height01 = remap01(terrain_height, glacier_height_min, glacier_height_max);
 		glacier_height01 = float(int(glacier_height01 * glacier_height_bands)) / glacier_height_bands;
 		float flatness = dot(sphere_normal, mesh_normal);
 		float flat_t = smoothstep(0.76 - 0.01, 0.76 + 0.01, flatness);
@@ -140,6 +141,15 @@ void fragment() {
 		EMISSION = mix(c_flat, c_steep, 1.0 - flat_t) * shading;
 		ROUGHNESS = 1.0;
 		SPECULAR = 0.0;
+	} else if (body_kind == 4) {
+		float vein_a = abs(sin(dot(sphere_normal, vec3(17.0, 11.0, 23.0)) + terrain_data.x * 7.0));
+		float vein_b = abs(sin(dot(sphere_normal, vec3(-13.0, 29.0, 9.0)) - terrain_data.y * 11.0));
+		float veins = pow(clamp(1.0 - abs(vein_a - vein_b) * 4.5, 0.0, 1.0), 7.0);
+		float pulse = 0.72 + 0.28 * sin(TIME * 0.8 + dot(sphere_normal, vec3(5.0, 8.0, 3.0)));
+		ALBEDO = mix(vec3(0.008, 0.025, 0.03), vec3(0.025, 0.12, 0.11), veins);
+		EMISSION = cyclops_core_color * veins * pulse * 1.6;
+		ROUGHNESS = 0.78;
+		SPECULAR = 0.18;
 	} else if (body_kind == 0) {
 		vec4 source_noise = triplanar(terrain_vertex / planet_radius, mesh_normal, 10.0, earth_noise);
 		steepness = remap01(steepness, 0.0, 0.65);

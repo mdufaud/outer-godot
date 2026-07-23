@@ -5,6 +5,7 @@ const SHIP_SCENE := preload("res://scenes/ship.tscn")
 const PLAYER_SCENE := preload("res://scenes/player.tscn")
 const SUN_SCENE := preload("res://scenes/sun.tscn")
 const HUD_SCENE := preload("res://scenes/hud.tscn")
+const UNDERWATER_SHADER := preload("res://shaders/underwater.gdshader")
 const SolarSystemContentScript := preload("res://scripts/solar_system_content.gd")
 
 const SUN_RADIUS := 345.0
@@ -23,6 +24,8 @@ var _loading_layer: CanvasLayer
 var _loading_root: Control
 var _loading_label: Label
 var _loading_progress: ProgressBar
+var _underwater_root: Control
+var _underwater_tint: ColorRect
 var _loaded := false
 
 
@@ -66,6 +69,7 @@ func _boot() -> void:
 	player = PLAYER_SCENE.instantiate()
 	add_child(player)
 	spawn_on_planet(earth)
+	_build_underwater_overlay()
 
 	add_child(HUD_SCENE.instantiate())
 	if Touch.is_touch_ui():
@@ -85,6 +89,44 @@ func _process(_delta: float) -> void:
 	if sun_light != null and earth != null:
 		sun_light.global_position = sun.global_position
 		sun_light.look_at(earth.global_position, Vector3.UP)
+	_update_underwater_overlay()
+
+
+func _build_underwater_overlay() -> void:
+	var layer := CanvasLayer.new()
+	layer.layer = 1
+	add_child(layer)
+	_underwater_root = Control.new()
+	_underwater_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_underwater_root.size = get_viewport().get_visible_rect().size
+	layer.add_child(_underwater_root)
+	_underwater_tint = ColorRect.new()
+	_underwater_tint.material = ShaderMaterial.new()
+	(_underwater_tint.material as ShaderMaterial).shader = UNDERWATER_SHADER
+	_underwater_tint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_underwater_tint.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_underwater_tint.visible = false
+	_underwater_root.add_child(_underwater_tint)
+	get_viewport().size_changed.connect(_resize_underwater_overlay)
+
+
+func _resize_underwater_overlay() -> void:
+	if _underwater_root != null:
+		_underwater_root.size = get_viewport().get_visible_rect().size
+
+
+func _update_underwater_overlay() -> void:
+	if player == null or _underwater_tint == null or bool(player.get("piloting")):
+		if _underwater_tint != null:
+			_underwater_tint.visible = false
+		return
+	var camera := player.get_node("Camera3D") as Camera3D
+	var source: Node3D = Gravity.get_nearest_surface(player.global_position)
+	if source == null:
+		source = Gravity.get_strongest(player.global_position)
+	var underwater := source != null and source.has_method("get_water_depth") \
+			and float(source.get_water_depth(camera.global_position)) > 0.0
+	_underwater_tint.visible = underwater
 
 
 func _build_loading_screen() -> void:
@@ -155,6 +197,7 @@ func _spawn_body(body_name: String, position_value: Vector3, data: Dictionary) -
 		"body_kind": "body_kind",
 		"surface_style": "surface_style",
 		"radius": "radius",
+		"core_radius": "core_radius",
 		"gravity": "surface_gravity",
 		"seed": "rng_seed",
 		"velocity": "initial_velocity",

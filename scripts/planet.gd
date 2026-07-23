@@ -16,6 +16,7 @@ static var _topology_mutex := Mutex.new()
 @export_enum("earth", "moon", "alien", "shattered", "moat", "fiery_twin", "icey_twin", "cyclops", "tumbling_bean", "watchful_eye", "asteroid", "glacier") var body_kind := "earth"
 @export_enum("terrain", "lava", "ice") var surface_style := "terrain"
 @export var radius := 46.0
+@export var core_radius := 0.0
 @export var surface_gravity := 12.0
 @export var influence_scale := 30.0
 @export var rng_seed := 1337
@@ -57,6 +58,9 @@ var _atmosphere_lut: RefCounted
 var _atmosphere_lut_bound := false
 var _height_generator: RefCounted
 var _height_generator_initialized := false
+var _storm_interior: Node3D
+var _storm_orbits: Array[Node3D] = []
+var _storm_shell_radius := 0.0
 var _lod_resolutions: Array[int] = []
 var _active_lod := -1
 var _terrain_height_minmax := Vector2.ONE
@@ -75,6 +79,7 @@ func _ready() -> void:
 	_build_collision()
 	_build_ocean()
 	_build_atmosphere()
+	_build_storm_system()
 	for job in _boot_jobs:
 		if job.phase == "topology":
 			_height_generator.initialize()
@@ -91,15 +96,16 @@ func _exit_tree() -> void:
 	Gravity.unregister(self)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	_poll_boot()
 	_poll_atmosphere_lut()
 	_update_lod()
 	_update_lighting()
+	_update_storms(delta)
 
 
 func get_surface_radius_towards(direction: Vector3) -> float:
-	return radius + _height_for(direction.normalized())
+	return _core_radius() + _height_for(direction.normalized())
 
 
 func get_water_depth(position_value: Vector3) -> float:
@@ -158,6 +164,8 @@ func get_collider_surface_radius(direction: Vector3) -> float:
 
 func get_landing_point(direction: Vector3, clearance := 0.0) -> Vector3:
 	var unit_direction := direction.normalized()
+	if body_kind == "cyclops" and has_ocean:
+		return global_position + unit_direction * (radius + ocean_level + clearance)
 	return global_position + unit_direction * (get_collider_surface_radius(unit_direction) + clearance)
 
 
@@ -175,14 +183,14 @@ func get_sunlit_spawn_direction(sun_position: Vector3) -> Vector3:
 		var light := direction.dot(direction_to_sun)
 		if light <= 0.25:
 			continue
-		if has_ocean and _height_for(direction) <= ocean_level + 0.7:
+		if has_ocean and _height_for(direction) <= _ocean_level_above_core() + 0.7:
 			continue
 		var score := light
 		if _is_moon_profile():
 			score -= _height_generator.sample_shading_data(direction).w * 0.1
 		if score <= best_score:
 			continue
-		if has_ocean and _collider_height_for(direction) <= ocean_level + 0.7:
+		if has_ocean and _collider_height_for(direction) <= _ocean_level_above_core() + 0.7:
 			continue
 		best_score = score
 		best_direction = direction
@@ -198,7 +206,7 @@ func get_land_direction() -> Vector3:
 			rng.randf_range(0.05, 1.0),
 			rng.randf_range(-1.0, 1.0)
 		).normalized()
-		if not has_ocean or _height_for(direction) > ocean_level + 0.7:
+		if not has_ocean or _height_for(direction) > _ocean_level_above_core() + 0.7:
 			return direction
 	return Vector3.UP
 
@@ -214,7 +222,7 @@ func get_nearby_land_direction(origin: Vector3) -> Vector3:
 	for _attempt in 256:
 		var offset := tangent_a * rng.randf_range(-0.22, 0.22) + tangent_b * rng.randf_range(-0.22, 0.22)
 		var direction := (origin + offset).normalized()
-		if origin.angle_to(direction) * radius >= 8.0 and _collider_height_for(direction) > ocean_level + 0.7:
+		if origin.angle_to(direction) * _core_radius() >= 8.0 and _collider_height_for(direction) > _ocean_level_above_core() + 0.7:
 			return direction
 	return origin
 
@@ -374,6 +382,10 @@ func _build_ocean() -> void:
 	_ocean_material.set_shader_parameter("depth_multiplier", ocean_depth_multiplier)
 	_ocean_material.set_shader_parameter("alpha_multiplier", ocean_alpha_multiplier)
 	_ocean_material.set_shader_parameter("specular_color", ocean_specular_color)
+	if body_kind == "cyclops":
+		_ocean_material.set_shader_parameter("ambient_color", Color(0.08, 0.3, 0.29))
+		_ocean_material.set_shader_parameter("ambient_strength", 0.24)
+		_ocean_material.set_shader_parameter("sky_diffusion", 0.22)
 	_ocean_material.render_priority = 1
 	ocean.mesh = mesh
 	ocean.material_override = _ocean_material
@@ -392,6 +404,7 @@ func _build_atmosphere() -> void:
 	_atmosphere_material.set_shader_parameter("planet_center", global_position)
 	_atmosphere_material.set_shader_parameter("planet_radius", radius)
 	_atmosphere_material.set_shader_parameter("atmosphere_radius", radius * (1.0 + atmosphere_scale))
+	_atmosphere_material.set_shader_parameter("atmosphere_color", atmosphere_color)
 	_atmosphere_material.set_shader_parameter("density_falloff", atmosphere_density_falloff)
 	_atmosphere_material.set_shader_parameter("scattering_coefficients", Vector3(
 		pow(400.0 / atmosphere_wavelengths.x, 4.0),
@@ -407,6 +420,147 @@ func _build_atmosphere() -> void:
 	add_child(_atmosphere_mesh)
 	_atmosphere_lut = AtmosphereLutScript.new()
 	_atmosphere_lut.initialize(1.0 + atmosphere_scale, atmosphere_density_falloff)
+
+
+func _build_storm_system() -> void:
+	if body_kind != "cyclops":
+		return
+	var cloud_shell := MeshInstance3D.new()
+	cloud_shell.name = "StormCloudShell"
+	var cloud_mesh := SphereMesh.new()
+	_storm_shell_radius = radius + ocean_level + 38.0
+	cloud_mesh.radius = _storm_shell_radius
+	cloud_mesh.height = cloud_mesh.radius * 2.0
+	cloud_mesh.radial_segments = 96
+	cloud_mesh.rings = 48
+	var cloud_material := ShaderMaterial.new()
+	cloud_material.shader = preload("res://shaders/tornado.gdshader")
+	cloud_shell.mesh = cloud_mesh
+	cloud_shell.material_override = cloud_material
+	cloud_shell.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(cloud_shell)
+
+
+func _build_storm_interior() -> void:
+	if _storm_interior != null:
+		return
+	_storm_interior = Node3D.new()
+	_storm_interior.name = "StormInterior"
+	add_child(_storm_interior)
+	var storm_rng := RandomNumberGenerator.new()
+	storm_rng.seed = rng_seed * 3571 + 91
+	for index in 6:
+		var orbit := Node3D.new()
+		orbit.name = "TornadoOrbit%d" % index
+		orbit.rotation = Vector3(
+			storm_rng.randf_range(-1.1, 1.1),
+			storm_rng.randf_range(0.0, TAU),
+			storm_rng.randf_range(-0.7, 0.7)
+		)
+		orbit.set_meta("speed", storm_rng.randf_range(0.035, 0.085) * (-1.0 if index % 2 else 1.0))
+		_storm_interior.add_child(orbit)
+		var funnel_height := storm_rng.randf_range(34.0, 37.5)
+		var funnel_root := Node3D.new()
+		funnel_root.name = "Tornado"
+		funnel_root.position = Vector3(radius + ocean_level + funnel_height * 0.5, 0.0, 0.0)
+		funnel_root.rotation_degrees.z = -90.0
+		orbit.add_child(funnel_root)
+		var base_phase := storm_rng.randf_range(0.0, TAU)
+		for layer in 3:
+			var funnel := MeshInstance3D.new()
+			funnel.name = "CloudLayer%d" % layer
+			var funnel_mesh := CylinderMesh.new()
+			funnel_mesh.height = funnel_height * (1.0 - float(layer) * 0.035)
+			funnel_mesh.bottom_radius = storm_rng.randf_range(0.7, 1.15) * (1.0 + float(layer) * 0.28)
+			funnel_mesh.top_radius = storm_rng.randf_range(7.2, 10.8) * (1.0 + float(layer) * 0.18)
+			funnel_mesh.radial_segments = 48
+			funnel_mesh.rings = 24
+			var funnel_material := ShaderMaterial.new()
+			funnel_material.shader = load("res://shaders/tornado_funnel.gdshader")
+			funnel_material.set_shader_parameter("phase", base_phase + float(layer) * 2.1)
+			funnel_material.set_shader_parameter("layer_offset", float(layer) * 0.37)
+			funnel_material.set_shader_parameter("opacity", 0.48 - float(layer) * 0.09)
+			funnel.mesh = funnel_mesh
+			funnel.material_override = funnel_material
+			funnel.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			funnel_root.add_child(funnel)
+		for ring_index in 3:
+			var spray := MeshInstance3D.new()
+			spray.name = "SprayRing%d" % ring_index
+			var spray_mesh := TorusMesh.new()
+			spray_mesh.inner_radius = 1.5 + float(ring_index) * 1.35
+			spray_mesh.outer_radius = spray_mesh.inner_radius + 0.65
+			spray_mesh.rings = 48
+			spray_mesh.ring_segments = 12
+			var spray_material := ShaderMaterial.new()
+			spray_material.shader = load("res://shaders/storm_spray.gdshader")
+			spray_material.set_shader_parameter("phase", base_phase + float(ring_index) * 1.7)
+			spray.mesh = spray_mesh
+			spray.material_override = spray_material
+			spray.position.y = -funnel_height * 0.5 + 0.35 + float(ring_index) * 0.28
+			spray.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			funnel_root.add_child(spray)
+		_storm_orbits.append(orbit)
+	_build_abyss_lights(storm_rng)
+
+
+func _build_abyss_lights(storm_rng: RandomNumberGenerator) -> void:
+	var glow_material := StandardMaterial3D.new()
+	glow_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	glow_material.albedo_color = Color(0.08, 0.8, 0.68)
+	glow_material.emission_enabled = true
+	glow_material.emission = Color(0.12, 1.0, 0.78)
+	glow_material.emission_energy_multiplier = 2.2
+	for index in 9:
+		var direction := Vector3(
+			storm_rng.randf_range(-1.0, 1.0),
+			storm_rng.randf_range(-1.0, 1.0),
+			storm_rng.randf_range(-1.0, 1.0)
+		).normalized()
+		var source := Node3D.new()
+		source.name = "CoreGlow%d" % index
+		source.position = direction * (_core_radius() + storm_rng.randf_range(2.0, 8.0))
+		_storm_interior.add_child(source)
+		var glow := MeshInstance3D.new()
+		var glow_mesh := SphereMesh.new()
+		glow_mesh.radius = storm_rng.randf_range(0.8, 1.8)
+		glow_mesh.height = glow_mesh.radius * 2.0
+		glow.mesh = glow_mesh
+		glow.material_override = glow_material
+		glow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		source.add_child(glow)
+		var light := OmniLight3D.new()
+		light.light_color = Color(0.12, 0.95, 0.75)
+		light.light_energy = storm_rng.randf_range(1.4, 2.3)
+		light.omni_range = storm_rng.randf_range(24.0, 36.0)
+		light.omni_attenuation = 1.35
+		light.shadow_enabled = false
+		source.add_child(light)
+
+
+func _clear_storm_interior() -> void:
+	if _storm_interior == null:
+		return
+	_storm_interior.queue_free()
+	_storm_interior = null
+	_storm_orbits.clear()
+
+
+func _update_storms(delta: float) -> void:
+	if body_kind != "cyclops":
+		return
+	var camera := get_viewport().get_camera_3d()
+	if camera == null:
+		return
+	var inside_clouds := camera.global_position.distance_to(global_position) < _storm_shell_radius - 1.0
+	if inside_clouds and _storm_interior == null:
+		_build_storm_interior()
+	elif not inside_clouds and _storm_interior != null:
+		_clear_storm_interior()
+	for orbit in _storm_orbits:
+		orbit.rotate_y(float(orbit.get_meta("speed")) * delta)
+
+
 func _poll_atmosphere_lut() -> void:
 	if _atmosphere_lut_bound or _atmosphere_lut == null or _atmosphere_lut.texture == null:
 		return
@@ -481,7 +635,7 @@ func _mesh_cache_path(purpose: String, resolution: int) -> String:
 		purpose,
 		body_kind,
 		rng_seed,
-		int(round(radius * 1000.0)),
+		int(round(_core_radius() * 1000.0)),
 		resolution,
 	]
 
@@ -499,7 +653,7 @@ func _build_mesh_from_factors(resolution: int, factors: PackedFloat32Array, shad
 	var shaped_vertices := PackedVector3Array()
 	shaped_vertices.resize(directions.size())
 	for index in directions.size():
-		shaped_vertices[index] = directions[index] * (radius * factors[index])
+		shaped_vertices[index] = directions[index] * (_core_radius() * factors[index])
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = shaped_vertices
@@ -652,8 +806,8 @@ func _set_terrain_properties(average_biome: float) -> void:
 		_surface_material.set_shader_parameter("asteroid_col_steep", Color(0.28, 0.26, 0.25))
 		_surface_material.set_shader_parameter("asteroid_col_steep_deep", Color(0.12, 0.11, 0.11))
 		_surface_material.set_shader_parameter("asteroid_col_ambient", Color(0.30, 0.29, 0.30))
-		_surface_material.set_shader_parameter("asteroid_height_min", 12.0)
-		_surface_material.set_shader_parameter("asteroid_height_max", 24.0)
+		_surface_material.set_shader_parameter("asteroid_height_min", radius * 2.0 / 3.0)
+		_surface_material.set_shader_parameter("asteroid_height_max", radius * 4.0 / 3.0)
 		_surface_material.set_shader_parameter("asteroid_height_bands", 4.0)
 		return
 	if body_kind == "glacier":
@@ -663,9 +817,13 @@ func _set_terrain_properties(average_biome: float) -> void:
 		_surface_material.set_shader_parameter("glacier_col_steep", Color(0.55, 0.62, 0.70))
 		_surface_material.set_shader_parameter("glacier_col_steep_deep", Color(0.22, 0.30, 0.42))
 		_surface_material.set_shader_parameter("glacier_col_ambient", Color(0.42, 0.50, 0.60))
-		_surface_material.set_shader_parameter("glacier_height_min", 20.0)
-		_surface_material.set_shader_parameter("glacier_height_max", 29.0)
+		_surface_material.set_shader_parameter("glacier_height_min", _terrain_height_minmax.x)
+		_surface_material.set_shader_parameter("glacier_height_max", _terrain_height_minmax.y)
 		_surface_material.set_shader_parameter("glacier_height_bands", 9.0)
+		return
+	if body_kind == "cyclops":
+		_surface_material.set_shader_parameter("body_kind", 4)
+		_surface_material.set_shader_parameter("cyclops_core_color", Color(0.08, 1.0, 0.72))
 		return
 	_surface_material.set_shader_parameter("body_kind", 1 if _is_moon_profile() else 0)
 	_surface_material.set_shader_parameter("ocean_level", 1.0 + ocean_level / radius)
@@ -728,8 +886,16 @@ func _is_moon_profile() -> bool:
 
 
 func _collider_height_for(direction: Vector3) -> float:
-	return get_collider_surface_radius(direction) - radius
+	return get_collider_surface_radius(direction) - _core_radius()
 
 
 func _height_for(direction: Vector3) -> float:
-	return radius * (_height_generator.sample_factor(direction.normalized()) - 1.0)
+	return _core_radius() * (_height_generator.sample_factor(direction.normalized()) - 1.0)
+
+
+func _core_radius() -> float:
+	return radius if core_radius <= 0.0 else core_radius
+
+
+func _ocean_level_above_core() -> float:
+	return radius + ocean_level - _core_radius()

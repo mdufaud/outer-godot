@@ -3,11 +3,12 @@ extends CharacterBody3D
 const WALK_SPEED := 7.0
 const SPRINT_MULT := 1.8
 const JUMP_SPEED := 6.36 # half jump height (v/sqrt(2))
-const JETPACK_ACCEL := 40.0
+const JETPACK_ACCEL := 60.0
 const JETPACK_BRAKE := 20.0
 const JETPACK_DRAG := 1.5
-const SWIM_ACCEL := 10.0
-const SWIM_DRAG := 3.0
+const SWIM_DRAG := 2.0
+const WATER_JETPACK_ACCEL := 20.0
+const WATER_BUOYANCY := 1.05
 const PLAYER_HALF_HEIGHT := 0.8
 const GROUND_COLLISION_MARGIN := 0.35
 const GROUND_SNAP_DISTANCE := 0.5
@@ -74,7 +75,8 @@ func _physics_process(delta: float) -> void:
 		Touch.look_delta = Vector2.ZERO
 	var fast_time: bool = celestial_system != null and celestial_system.is_fast_forward_enabled()
 	var gravity := Vector3.ZERO if fast_time else Gravity.get_gravity(global_position)
-	var reference_source := Gravity.get_nearest_surface(global_position)
+	var surface_source := Gravity.get_nearest_surface(global_position)
+	var reference_source := surface_source
 	if reference_source == null:
 		reference_source = Gravity.get_strongest(global_position)
 	var reference_velocity := Vector3.ZERO
@@ -83,7 +85,7 @@ func _physics_process(delta: float) -> void:
 		reference_velocity = reference_source.get("orbital_velocity")
 		if not fast_time:
 			relative_gravity = Gravity.get_relative_gravity(global_position, reference_source)
-	if relative_gravity.length_squared() > 0.0001:
+	if surface_source != null and relative_gravity.length_squared() > 0.0001:
 		up_dir = -relative_gravity.normalized()
 	_align_to_up(delta)
 	up_direction = up_dir
@@ -103,24 +105,26 @@ func _physics_process(delta: float) -> void:
 	var swimming := water_depth > 0.2
 	var movement_basis := global_basis if grounded and not swimming else camera.global_basis
 	var wish_dir := movement_basis * Vector3(input_2d.x, 0.0, input_2d.y)
+	var jump_strength := Input.get_action_strength("jump")
 
 	if swimming:
-		var swim_dir := wish_dir + up_dir * Input.get_axis("sprint", "jump")
-		relative_velocity *= exp(-SWIM_DRAG * delta)
-		relative_velocity += swim_dir.limit_length(1.0) * SWIM_ACCEL * delta
+		var swim_target := wish_dir.limit_length(1.0) * WALK_SPEED
+		relative_velocity = relative_velocity.lerp(swim_target, 1.0 - exp(-SWIM_DRAG * delta))
+		relative_velocity += up_dir * Input.get_axis("sprint", "jump") * WATER_JETPACK_ACCEL * delta
 		var submerged := clampf((water_depth + PLAYER_HALF_HEIGHT) / (PLAYER_HALF_HEIGHT * 2.0), 0.0, 1.0)
-		relative_gravity *= 1.0 - submerged
+		relative_gravity *= 1.0 - submerged * WATER_BUOYANCY
 	elif grounded:
 		var v_vert := up_dir * maxf(relative_velocity.dot(up_dir), 0.0)
 		var v_horiz := relative_velocity - v_vert
 		v_horiz = v_horiz.lerp(wish_dir * speed, clampf(GROUND_LERP * delta, 0.0, 1.0))
 		if Input.is_action_just_pressed("jump"):
 			v_vert += up_dir * JUMP_SPEED
+		v_vert += up_dir * jump_strength * JETPACK_ACCEL * delta
 		relative_velocity = v_horiz + v_vert
 	else:
 		relative_velocity *= exp(-JETPACK_DRAG * delta)
-		relative_velocity += wish_dir * JETPACK_ACCEL * delta
-		relative_velocity += up_dir * Input.get_axis("sprint", "jump") * JETPACK_ACCEL * delta
+		var thrust_dir := (wish_dir + up_dir * Input.get_axis("sprint", "jump")).limit_length(1.0)
+		relative_velocity += thrust_dir * JETPACK_ACCEL * delta
 		if Input.is_action_pressed("brake"):
 			relative_velocity = relative_velocity.move_toward(Vector3.ZERO, JETPACK_BRAKE * delta)
 

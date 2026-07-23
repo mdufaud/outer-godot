@@ -8,6 +8,9 @@ uniform float planet_scale = 1.0;
 uniform vec3 shallow_color : source_color = vec3(0.31401902, 0.943, 0.75800556);
 uniform vec3 deep_color : source_color = vec3(0.05882353, 0.15686275, 0.35686275);
 uniform vec3 specular_color : source_color = vec3(0.9669199, 1.0, 0.8820755);
+uniform vec3 ambient_color : source_color = vec3(0.0);
+uniform float ambient_strength = 0.0;
+uniform float sky_diffusion = 0.0;
 uniform float depth_multiplier = 15.0;
 uniform float alpha_multiplier = 70.0;
 uniform float wave_strength = 0.668;
@@ -69,9 +72,12 @@ void fragment() {
 	float alpha = 1.0 - exp(-ocean_depth / max(planet_scale, 0.00001) * alpha_multiplier);
 	vec3 ocean_color = mix(shallow_color, deep_color, depth_blend);
 	float diffuse_lighting = max(dot(sphere_normal, normalize(sun_direction)), 0.0);
+	float wrapped_light = clamp(dot(wave_normal, normalize(sun_direction)) * 0.35 + 0.65, 0.0, 1.0);
+	float cloud_diffusion = 0.72 + 0.28 * sin(dot(sphere_normal, vec3(9.1, 13.7, 7.3)) + TIME * 0.18);
+	vec3 scattered_sky = ambient_color * ambient_strength * mix(wrapped_light, cloud_diffusion, sky_diffusion);
 	float specular_angle = acos(clamp(dot(normalize(normalize(sun_direction) - ray_direction), wave_normal), -1.0, 1.0));
 	float specular_exponent = specular_angle / max(1.0 - smoothness, 0.0001);
 	float specular_highlight = exp(-specular_exponent * specular_exponent);
-	ALBEDO = ocean_color * diffuse_lighting + specular_color * specular_highlight;
+	ALBEDO = ocean_color * diffuse_lighting + scattered_sky + specular_color * specular_highlight;
 	ALPHA = alpha;
 }
