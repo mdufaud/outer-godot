@@ -2,13 +2,13 @@ extends Control
 
 var main: Node3D
 
-const BW := 120.0
-const BH := 96.0
-const GAP := 16.0
-const MARGIN := 24.0
-const JOY_OFFSET := Vector2(160, -160)
-const JOY_RADIUS := 110.0
-const KNOB_RADIUS := 46.0
+const BW := 62.0
+const BH := 52.0
+const GAP := 6.0
+const MARGIN := 16.0
+const JOY_OFFSET := Vector2(94, -94)
+const JOY_RADIUS := 64.0
+const KNOB_RADIUS := 26.0
 const HOLD_ACTIONS := [
 	"move_forward", "move_back", "move_left", "move_right",
 	"jump", "sprint", "brake", "roll_left", "roll_right",
@@ -86,6 +86,9 @@ func _input(event: InputEvent) -> void:
 
 
 func _on_press(index: int, pos: Vector2) -> void:
+	var hud := get_tree().get_first_node_in_group("hud")
+	if hud != null and hud.has_method("is_touch_over_ui") and hud.is_touch_over_ui(pos):
+		return
 	for b in _buttons:
 		if _btn_rect(b).has_point(pos):
 			if b.action != "":
@@ -175,14 +178,72 @@ func _respawn() -> void:
 
 func _draw() -> void:
 	var c := _joy_center()
-	draw_circle(c, JOY_RADIUS, Color(1, 1, 1, 0.08))
-	draw_arc(c, JOY_RADIUS, 0.0, TAU, 48, Color(1, 1, 1, 0.25), 2.0)
-	draw_circle(c + _joy_knob, KNOB_RADIUS, Color(1, 1, 1, 0.25))
+	draw_circle(c, JOY_RADIUS, Color(0.08, 0.20, 0.34, 0.46))
+	draw_arc(c, JOY_RADIUS, 0.0, TAU, 48, Color(0.40, 0.78, 1.0, 0.65), 2.0)
+	draw_circle(c + _joy_knob, KNOB_RADIUS, Color(0.40, 0.78, 1.0, 0.62))
+	draw_arc(c + _joy_knob, KNOB_RADIUS, 0.0, TAU, 32, Color(0.78, 0.93, 1.0, 0.75), 1.5)
 	for b in _buttons:
 		var r := _btn_rect(b)
-		draw_rect(r, Color(1, 1, 1, 0.12), true)
-		draw_rect(r, Color(1, 1, 1, 0.3), false, 2.0)
+		var accent := _button_accent(b.label)
+		var fill := Color(accent, 0.22)
+		draw_style_box(_touch_button_style(fill, accent), r)
 		if _font:
-			var ts := _font.get_string_size(b.label, HORIZONTAL_ALIGNMENT_LEFT, -1, 22)
-			var at := r.position + Vector2((r.size.x - ts.x) * 0.5, r.size.y * 0.5 + 8.0)
-			draw_string(_font, at, b.label, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(1, 1, 1, 0.85))
+			var icon := _button_icon(b.label)
+			var icon_size := _font.get_string_size(icon, HORIZONTAL_ALIGNMENT_LEFT, -1, 19)
+			var icon_at := r.position + Vector2((r.size.x - icon_size.x) * 0.5, 22.0)
+			draw_string(_font, icon_at, icon, HORIZONTAL_ALIGNMENT_LEFT, -1, 19, Color(0.94, 0.98, 1.0, 0.98))
+			var caption := _button_caption(b.label)
+			var caption_size := _font.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, 10)
+			var caption_at := r.position + Vector2((r.size.x - caption_size.x) * 0.5, 42.0)
+			draw_string(_font, caption_at, caption, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.82, 0.91, 1.0, 0.9))
+
+
+func _button_icon(label: String) -> String:
+	match label:
+		"Jump", "Up":
+			return "▲"
+		"Sprint", "Down":
+			return "▼"
+		"E":
+			return "✦"
+		"R":
+			return "↻"
+		"Brake":
+			return "■"
+		"Roll R":
+			return "↷"
+		"Roll L":
+			return "↶"
+		"Exit":
+			return "×"
+	return "•"
+
+
+func _button_caption(label: String) -> String:
+	match label:
+		"E":
+			return "Interact"
+		"R":
+			return "Respawn"
+	return label
+
+
+func _button_accent(label: String) -> Color:
+	if label in ["Jump", "Up", "Sprint", "Down"]:
+		return Color(0.35, 0.82, 1.0)
+	if label in ["E", "Exit"]:
+		return Color(0.45, 1.0, 0.70)
+	if label == "Brake":
+		return Color(1.0, 0.56, 0.36)
+	if label in ["R", "Roll R", "Roll L"]:
+		return Color(1.0, 0.78, 0.36)
+	return Color(0.65, 0.78, 1.0)
+
+
+func _touch_button_style(fill: Color, accent: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = fill
+	style.border_color = Color(accent, 0.72)
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(12)
+	return style

@@ -11,6 +11,8 @@ const MOON := 1
 const ALIEN := 2
 const SHATTERED := 3
 const MOAT := 4
+const ASTEROID := 5
+const GLACIER := 6
 
 var _body_kind := EARTH
 var _profile := "earth"
@@ -62,6 +64,10 @@ func _init(body_kind: String, seed: int) -> void:
 			_body_kind = SHATTERED
 		"moat", "fiery_twin":
 			_body_kind = MOAT
+		"asteroid":
+			_body_kind = ASTEROID
+		"glacier":
+			_body_kind = GLACIER
 		_:
 			_body_kind = EARTH
 	_seed = seed
@@ -138,6 +144,10 @@ func sample_factor(direction: Vector3) -> float:
 			return _shattered_factor(direction)
 		MOAT:
 			return _moat_factor(direction)
+		ASTEROID:
+			return _asteroid_factor(direction)
+		GLACIER:
+			return _glacier_factor(direction)
 		_:
 			return _earth_factor(direction)
 
@@ -350,6 +360,12 @@ func _build_settings() -> void:
 			_set_simple_noise(0, random, 8, 0.5, 2.0, 1.0, 2.5, 0.0)
 			_settings[18] = Vector4(4.35, 2.26, 0.8, 217.66)
 			_build_craters(400, Vector2(0.01, 0.1), 0.13, 1.6, Vector2(0.4, 1.5), 0.6, 0)
+		ASTEROID:
+			_settings[0] = Vector4(8.0, 1.35, 0.78, 4.5)
+			_settings[1] = Vector4(3.4, -0.35, 0.0, 0.0)
+		GLACIER:
+			_settings[0] = Vector4(8.0, 2.1, 0.55, 3.6)
+			_settings[1] = Vector4(1.8, 0.0, 0.0, 0.0)
 	var values := PackedFloat32Array()
 	values.resize(_settings.size() * 4)
 	for index in _settings.size():
@@ -411,11 +427,14 @@ func _build_shading_settings() -> void:
 		_set_shading_simple_noise(0, random, 4, 0.5, 2.0, 1.875925, 1.1754117, 0.0)
 		var detail_warp_elevation := 2.2643394
 		if _profile == "watchful_eye":
-			detail_warp_elevation = 5.73
+			detail_warp_elevation = 9.4
 		_set_shading_simple_noise(3, random, 4, 0.5, 2.0, 2.4969678, detail_warp_elevation, 0.0)
-		_set_shading_simple_noise(6, random, 4, 0.5, 2.34, 1.35, 1.43, 0.0)
-		_build_moon_points(29 if _profile == "watchful_eye" else 32, shading_seed)
-		_build_ejecta_craters(7 if _profile == "watchful_eye" else 2, 102 if _profile == "watchful_eye" else 0, 12.0 if _profile == "watchful_eye" else 11.0)
+		if _profile == "watchful_eye":
+			_set_shading_simple_noise(6, random, 5, 0.58, 2.7, 2.1, 1.8, 0.0)
+		else:
+			_set_shading_simple_noise(6, random, 4, 0.5, 2.34, 1.35, 1.43, 0.0)
+		_build_moon_points(18 if _profile == "watchful_eye" else 32, shading_seed)
+		_build_ejecta_craters(3 if _profile == "watchful_eye" else 2, 102 if _profile == "watchful_eye" else 0, 9.0 if _profile == "watchful_eye" else 11.0)
 	_shading_settings_bytes = _pack_vector4_array(_shading_settings)
 	_moon_points_bytes = _pack_vector4_array(_moon_points)
 	_ejecta_craters_bytes = _pack_vector4_array(_ejecta_craters)
@@ -497,10 +516,10 @@ func _build_moon_settings(random: DotNetRandom) -> void:
 			_set_ridge_noise(16, random, 4, 0.5, 2.0, 15.0, 0.0, 2.0, 1.0, 0.0, 0.0)
 			_build_craters(3000, Vector2(0.012, 0.12), -0.16, 1.22, Vector2(0.4, 1.5), 0.742, 17801)
 		"watchful_eye":
-			_set_simple_noise(10, random, 4, 0.5, 2.0, 1.65, 0.0, 0.0, Vector3(3.0, 14.7, 0.0))
-			_set_ridge_noise(13, random, 4, 0.42, 5.0, 1.0, 6.8, 2.0, 1.0, 0.0, 2.0)
-			_set_ridge_noise(16, random, 5, 0.5, 2.0, 1.0, 1.0, 2.0, 1.0, 0.0, 0.0)
-			_build_craters(413, Vector2(0.02, 0.47), 0.37, 1.28, Vector2(0.04, 1.27), 0.849, 17809)
+			_set_simple_noise(10, random, 4, 0.54, 2.0, 0.58, 7.8, 0.0, Vector3(3.0, 14.7, 0.0))
+			_set_ridge_noise(13, random, 4, 0.48, 2.8, 2.4, 3.6, 2.4, 1.0, -0.8, 1.2)
+			_set_ridge_noise(16, random, 5, 0.46, 2.2, 8.5, 1.35, 2.8, 1.0, -0.25, 0.45)
+			_build_craters(85, Vector2(0.012, 0.16), 0.12, 0.72, Vector2(0.18, 0.75), 0.68, 17809)
 		_:
 			_set_simple_noise(10, random, 4, 0.5, 2.0, 2.0, 1.0, 0.0)
 			_set_ridge_noise(13, random, 4, 0.42, 5.0, 2.0, 3.0, 3.0, 1.0, 0.0, 2.0)
@@ -622,6 +641,38 @@ func _moat_factor(position: Vector3) -> float:
 	if continent < 0.0:
 		continent *= 1.0 + config.w * absf(continent)
 	return 1.0 + continent * 0.01 + _crater_depth(position)
+
+
+func _asteroid_factor(position: Vector3) -> float:
+	var shape := _settings[0]
+	var terrain := _settings[1]
+	var surface_radius := 18.0
+	for _iteration in 4:
+		var noise := _ridged_fbm(position * surface_radius, int(shape.x), shape.y, shape.z, shape.w)
+		surface_radius = 18.0 - (noise - terrain.y) * terrain.x
+	return surface_radius / 18.0
+
+
+func _glacier_factor(position: Vector3) -> float:
+	var shape := _settings[0]
+	var terrain := _settings[1]
+	var surface_radius := 24.0
+	for _iteration in 4:
+		var noise := _ridged_fbm(position * surface_radius, int(shape.x), shape.y, shape.z, shape.w)
+		surface_radius = 24.0 - (noise - terrain.y) * terrain.x
+	return surface_radius / 24.0
+
+
+func _ridged_fbm(position: Vector3, layers: int, lacunarity: float, persistence: float, scale: float) -> float:
+	var noise := 0.0
+	var frequency := scale / 100.0
+	var amplitude := 1.0
+	for _layer in layers:
+		var value := 1.0 - absf(_simplex_noise(position * frequency) * 2.0 - 1.0)
+		noise += value * amplitude
+		amplitude *= persistence
+		frequency *= lacunarity
+	return noise
 
 
 func _earth_shading_data(position: Vector3) -> Vector4:

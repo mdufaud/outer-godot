@@ -52,7 +52,7 @@ static func get_body_definitions() -> Array[Dictionary]:
 			"name": "Cyclops",
 			"position": Vector3(11456.53, 0.0, 0.0),
 			"data": {
-				"body_kind": "cyclops", "surface_style": "terrain", "radius": 115.0, "gravity": 14.0,
+				"body_kind": "glacier", "surface_style": "terrain", "radius": 24.0, "gravity": 2.6,
 				"seed": 114, "velocity": Vector3(0.0, 0.0, -24.1230325623), "ocean": true,
 				"ocean_shallow_color": Color(0.0, 0.5, 0.43362522),
 				"ocean_deep_color": Color(0.0, 0.8329468, 1.0), "ocean_wave_strength": 0.759,
@@ -67,7 +67,7 @@ static func get_body_definitions() -> Array[Dictionary]:
 			"name": "Tumbling Bean",
 			"position": Vector3(11078.87, 0.0, 0.0),
 			"data": {
-				"body_kind": "tumbling_bean", "surface_style": "terrain", "radius": 9.2, "gravity": 2.0,
+				"body_kind": "asteroid", "surface_style": "terrain", "radius": 18.0, "gravity": 2.6,
 				"seed": 0, "velocity": Vector3(0.0, 0.0, -1.7264993484), "ocean": false,
 				"atmosphere": false,
 			},

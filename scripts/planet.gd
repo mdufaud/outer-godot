@@ -13,7 +13,7 @@ const MESH_CACHE_VERSION := 3
 static var _topology_cache: Dictionary = {}
 static var _topology_mutex := Mutex.new()
 
-@export_enum("earth", "moon", "alien", "shattered", "moat", "fiery_twin", "icey_twin", "cyclops", "tumbling_bean", "watchful_eye") var body_kind := "earth"
+@export_enum("earth", "moon", "alien", "shattered", "moat", "fiery_twin", "icey_twin", "cyclops", "tumbling_bean", "watchful_eye", "asteroid", "glacier") var body_kind := "earth"
 @export_enum("terrain", "lava", "ice") var surface_style := "terrain"
 @export var radius := 46.0
 @export var surface_gravity := 12.0
@@ -643,9 +643,31 @@ static func _orient_clockwise(vertices: PackedVector3Array, indices: PackedInt32
 func _set_terrain_properties(average_biome: float) -> void:
 	if surface_style != "terrain":
 		return
-	_surface_material.set_shader_parameter("body_kind", 1 if _is_moon_profile() else 0)
 	_surface_material.set_shader_parameter("planet_radius", radius)
 	_surface_material.set_shader_parameter("height_min_max", _terrain_height_minmax)
+	if body_kind == "asteroid":
+		_surface_material.set_shader_parameter("body_kind", 2)
+		_surface_material.set_shader_parameter("asteroid_col_flat", Color(0.38, 0.35, 0.32))
+		_surface_material.set_shader_parameter("asteroid_col_flat_deep", Color(0.19, 0.17, 0.16))
+		_surface_material.set_shader_parameter("asteroid_col_steep", Color(0.28, 0.26, 0.25))
+		_surface_material.set_shader_parameter("asteroid_col_steep_deep", Color(0.12, 0.11, 0.11))
+		_surface_material.set_shader_parameter("asteroid_col_ambient", Color(0.30, 0.29, 0.30))
+		_surface_material.set_shader_parameter("asteroid_height_min", 12.0)
+		_surface_material.set_shader_parameter("asteroid_height_max", 24.0)
+		_surface_material.set_shader_parameter("asteroid_height_bands", 4.0)
+		return
+	if body_kind == "glacier":
+		_surface_material.set_shader_parameter("body_kind", 3)
+		_surface_material.set_shader_parameter("glacier_col_flat", Color(0.86, 0.92, 0.97))
+		_surface_material.set_shader_parameter("glacier_col_flat_deep", Color(0.42, 0.58, 0.72))
+		_surface_material.set_shader_parameter("glacier_col_steep", Color(0.55, 0.62, 0.70))
+		_surface_material.set_shader_parameter("glacier_col_steep_deep", Color(0.22, 0.30, 0.42))
+		_surface_material.set_shader_parameter("glacier_col_ambient", Color(0.42, 0.50, 0.60))
+		_surface_material.set_shader_parameter("glacier_height_min", 20.0)
+		_surface_material.set_shader_parameter("glacier_height_max", 29.0)
+		_surface_material.set_shader_parameter("glacier_height_bands", 9.0)
+		return
+	_surface_material.set_shader_parameter("body_kind", 1 if _is_moon_profile() else 0)
 	_surface_material.set_shader_parameter("ocean_level", 1.0 + ocean_level / radius)
 	_surface_material.set_shader_parameter("earth_noise", EarthNoiseTexture)
 	_surface_material.set_shader_parameter("moon_noise", MoonNoiseTexture)
@@ -691,11 +713,14 @@ func _apply_reference_palette() -> void:
 			_surface_material.set_shader_parameter("moon_secondary_b", Color(0.43867922, 1.0, 0.9953623))
 			_surface_material.set_shader_parameter("moon_ejecta", Color.WHITE)
 		"watchful_eye":
-			_surface_material.set_shader_parameter("moon_primary_a", Color(0.10012459, 0.13390097, 0.16981131))
-			_surface_material.set_shader_parameter("moon_secondary_a", Color(0.28635636, 0.41927588, 0.6132076))
-			_surface_material.set_shader_parameter("moon_primary_b", Color(0.18867922, 0.036489844, 0.061920755))
-			_surface_material.set_shader_parameter("moon_secondary_b", Color(0.6981132, 0.55138284, 0.5433428))
-			_surface_material.set_shader_parameter("moon_ejecta", Color(1.0, 0.96236044, 0.8915094))
+			_surface_material.set_shader_parameter("moon_primary_a", Color(0.72, 0.88, 0.94))
+			_surface_material.set_shader_parameter("moon_secondary_a", Color(0.22, 0.48, 0.62))
+			_surface_material.set_shader_parameter("moon_primary_b", Color(0.055, 0.075, 0.085))
+			_surface_material.set_shader_parameter("moon_secondary_b", Color(0.42, 0.64, 0.70))
+			_surface_material.set_shader_parameter("moon_ejecta", Color(0.88, 0.97, 1.0))
+			_surface_material.set_shader_parameter("moon_biome_blend_strength", 0.82)
+			_surface_material.set_shader_parameter("moon_biome_warp_strength", 9.5)
+			_surface_material.set_shader_parameter("moon_random_biome_values", Vector4(-2.1, 0.35, -2.8, 4.2))
 
 
 func _is_moon_profile() -> bool:

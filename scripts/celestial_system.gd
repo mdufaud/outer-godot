@@ -46,6 +46,10 @@ func set_fast_forward_enabled(enabled: bool) -> void:
 	_time_multiplier = FAST_FORWARD_MULTIPLIER if enabled else 1.0
 
 
+func is_fast_forward_enabled() -> bool:
+	return _time_multiplier != 1.0
+
+
 func _initialize_orbits() -> void:
 	var sun: Node3D = _bodies_by_name.get("Sun")
 	if sun == null:

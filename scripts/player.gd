@@ -20,6 +20,7 @@ var up_dir := Vector3.UP
 var piloting := false
 var frame_source: Node3D = null
 var frame_velocity := Vector3.ZERO
+var celestial_system: Node = null
 
 @onready var camera: Camera3D = $Camera3D
 @onready var ray: RayCast3D = $Camera3D/RayCast3D
@@ -34,6 +35,7 @@ func _ready() -> void:
 	platform_on_leave = CharacterBody3D.PLATFORM_ON_LEAVE_DO_NOTHING
 	platform_floor_layers = 0
 	platform_wall_layers = 0
+	celestial_system = get_tree().get_first_node_in_group("celestial_system")
 	if not Touch.is_touch_ui():
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
@@ -42,6 +44,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if piloting:
 		return
 	if event is InputEventMouseButton and event.pressed and not Touch.is_touch_ui() and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+		var hud := get_tree().get_first_node_in_group("hud")
+		if hud != null and hud.has_method("is_mouse_over_ui") and hud.is_mouse_over_ui(event.position):
+			get_viewport().set_input_as_handled()
+			return
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		rotate_object_local(Vector3.UP, -event.relative.x * MOUSE_SENS)
@@ -66,7 +72,8 @@ func _physics_process(delta: float) -> void:
 		camera.rotate_x(-Touch.look_delta.y * MOUSE_SENS)
 		camera.rotation.x = clampf(camera.rotation.x, -1.5, 1.5)
 		Touch.look_delta = Vector2.ZERO
-	var gravity: Vector3 = Gravity.get_gravity(global_position)
+	var fast_time: bool = celestial_system != null and celestial_system.is_fast_forward_enabled()
+	var gravity := Vector3.ZERO if fast_time else Gravity.get_gravity(global_position)
 	var reference_source := Gravity.get_nearest_surface(global_position)
 	if reference_source == null:
 		reference_source = Gravity.get_strongest(global_position)
@@ -74,7 +81,8 @@ func _physics_process(delta: float) -> void:
 	var relative_gravity := gravity
 	if reference_source != null:
 		reference_velocity = reference_source.get("orbital_velocity")
-		relative_gravity = Gravity.get_relative_gravity(global_position, reference_source)
+		if not fast_time:
+			relative_gravity = Gravity.get_relative_gravity(global_position, reference_source)
 	if relative_gravity.length_squared() > 0.0001:
 		up_dir = -relative_gravity.normalized()
 	_align_to_up(delta)

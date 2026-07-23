@@ -19,17 +19,27 @@ var info_label: Label
 var hint_label: Label
 var teleport_root: Control
 var teleport_panel: PanelContainer
-var teleport_menu: OptionButton
+var teleport_menu: Button
+var teleport_dropdown: PanelContainer
+var planet_buttons: Array[Button] = []
+var debug_buttons: Array[Button] = []
+var gravity_button: Button
+var orbit_button: Button
 var navigation_overlay: NavigationOverlay
 var planet_markers_visible := false
 var celestial_bodies: Array[Node3D] = []
 var gravity_debug_visible := false
+var _dropdown_open := false
+var _selected_planet_name := ""
 
 const HINT_FOOT := "WASD walk/jetpack · Space/Shift ascend/descend · X brake · E interact · Tab markers · R respawn"
 const HINT_SHIP := "WASD thrust · Space/Shift up/down · Mouse steer · Z/C roll · X brake · Tab markers · E exit"
 const MARKER_MARGIN := 42.0
 const SHIP_COLOR := Color(0.35, 0.85, 1.0, 0.9)
 const PLANET_COLOR := Color(1.0, 0.82, 0.42, 0.82)
+const UI_PANEL_COLOR := Color(0.025, 0.045, 0.10, 0.94)
+const UI_BORDER_COLOR := Color(0.22, 0.55, 0.86, 0.65)
+const UI_ACCENT_COLOR := Color(0.35, 0.82, 1.0)
 const GRAVITY_COLORS := [
 	Color(1.0, 0.4, 0.3, 0.9),
 	Color(0.4, 0.85, 1.0, 0.9),
@@ -87,7 +97,8 @@ func _build_navigation_overlay() -> void:
 	navigation_overlay.name = "NavigationOverlay"
 	navigation_overlay.hud = self
 	navigation_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	navigation_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	navigation_overlay.position = Vector2.ZERO
+	navigation_overlay.size = get_viewport().get_visible_rect().size
 	add_child(navigation_overlay)
 
 
@@ -98,73 +109,123 @@ func _build_teleport_menu() -> void:
 	add_child(teleport_root)
 	teleport_panel = PanelContainer.new()
 	teleport_panel.name = "PlanetTeleportPanel"
-	teleport_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	teleport_panel.offset_left = -220.0
-	teleport_panel.offset_top = 16.0
-	teleport_panel.offset_right = -16.0
-	teleport_panel.offset_bottom = 56.0
-	var row := HBoxContainer.new()
+	teleport_panel.mouse_filter = Control.MOUSE_FILTER_PASS
+	teleport_panel.z_index = 10
+	teleport_panel.add_theme_stylebox_override("panel", _panel_style())
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 6)
+	var title := Label.new()
+	title.text = "PLANET NAVIGATION"
+	title.add_theme_font_size_override("font_size", 11)
+	title.add_theme_color_override("font_color", Color(0.62, 0.78, 0.95))
+	content.add_child(title)
 	var label := Label.new()
-	label.text = "Teleport to"
-	row.add_child(label)
-	teleport_menu = OptionButton.new()
+	label.text = "Teleport to planet"
+	label.add_theme_font_size_override("font_size", 14)
+	content.add_child(label)
+	teleport_menu = Button.new()
 	teleport_menu.name = "PlanetTeleportMenu"
+	teleport_menu.text = "Choose planet"
+	teleport_menu.custom_minimum_size = Vector2(0.0, 40.0)
+	teleport_menu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	teleport_menu.focus_mode = Control.FOCUS_NONE
+	teleport_menu.add_theme_font_size_override("font_size", 14)
+	_apply_button_theme(teleport_menu, UI_ACCENT_COLOR)
+	_make_ui_button(teleport_menu)
+	teleport_menu.pressed.connect(_toggle_planet_dropdown)
+	content.add_child(teleport_menu)
+	teleport_panel.add_child(content)
+	teleport_root.add_child(teleport_panel)
+
+	teleport_dropdown = PanelContainer.new()
+	teleport_dropdown.name = "PlanetTeleportDropdown"
+	teleport_dropdown.mouse_filter = Control.MOUSE_FILTER_PASS
+	teleport_dropdown.z_index = 20
+	teleport_dropdown.add_theme_stylebox_override("panel", _panel_style())
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var list := VBoxContainer.new()
+	list.name = "PlanetList"
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	list.add_theme_constant_override("separation", 5)
+	planet_buttons.clear()
 	for body in celestial_bodies:
 		if not body.has_method("get_surface_radius_towards"):
 			continue
-		teleport_menu.add_item(body.name)
-		teleport_menu.set_item_metadata(teleport_menu.item_count - 1, StringName(body.name))
-	teleport_menu.item_selected.connect(_on_planet_selected)
-	row.add_child(teleport_menu)
-	teleport_panel.add_child(row)
-	teleport_root.add_child(teleport_panel)
+		var planet_button := Button.new()
+		planet_button.name = "%sButton" % body.name.replace(" ", "")
+		planet_button.text = body.name
+		planet_button.custom_minimum_size = Vector2(0.0, 42.0)
+		planet_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		planet_button.toggle_mode = true
+		planet_button.focus_mode = Control.FOCUS_NONE
+		planet_button.add_theme_font_size_override("font_size", 14)
+		_apply_button_theme(planet_button, Color(0.45, 0.72, 1.0))
+		_make_ui_button(planet_button)
+		planet_button.pressed.connect(_on_planet_selected.bind(StringName(body.name)))
+		list.add_child(planet_button)
+		planet_buttons.append(planet_button)
+	scroll.add_child(list)
+	teleport_dropdown.add_child(scroll)
+	teleport_root.add_child(teleport_dropdown)
+	teleport_dropdown.visible = false
 
 
 func _build_gravity_debug_panel() -> void:
 	var panel := PanelContainer.new()
 	panel.name = "GravityDebugPanel"
-	panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	panel.offset_left = -330.0
-	panel.offset_top = 68.0
-	panel.offset_right = -16.0
-	panel.modulate.a = 0.82
+	panel.mouse_filter = Control.MOUSE_FILTER_PASS
+	panel.add_theme_stylebox_override("panel", _panel_style())
 	var content := VBoxContainer.new()
-	content.add_theme_constant_override("separation", 4)
+	content.add_theme_constant_override("separation", 7)
 	var title := Label.new()
-	title.text = "DEBUG"
+	title.text = "DEBUG TOOLS"
 	title.add_theme_font_size_override("font_size", 11)
-	title.modulate = Color(1.0, 1.0, 1.0, 0.65)
+	title.add_theme_color_override("font_color", Color(0.62, 0.78, 0.95))
 	content.add_child(title)
-	var grid := GridContainer.new()
-	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 4)
-	grid.add_theme_constant_override("v_separation", 4)
-	var gravity_button := Button.new()
+	var buttons := GridContainer.new()
+	buttons.columns = 2
+	buttons.add_theme_constant_override("h_separation", 6)
+	buttons.add_theme_constant_override("v_separation", 5)
+	gravity_button = Button.new()
 	gravity_button.name = "GravityDebugToggle"
-	gravity_button.text = "Show Gravity"
+	gravity_button.text = "Gravity: OFF"
 	gravity_button.toggle_mode = true
+	gravity_button.custom_minimum_size = Vector2(0.0, 38.0)
 	gravity_button.focus_mode = Control.FOCUS_NONE
-	gravity_button.add_theme_font_size_override("font_size", 11)
+	gravity_button.add_theme_font_size_override("font_size", 13)
+	_apply_button_theme(gravity_button, Color(1.0, 0.50, 0.36))
+	_make_ui_button(gravity_button)
 	gravity_button.toggled.connect(_on_gravity_debug_toggled)
-	grid.add_child(gravity_button)
-	var orbit_button := Button.new()
+	buttons.add_child(gravity_button)
+	orbit_button = Button.new()
 	orbit_button.name = "OrbitFastForwardToggle"
-	orbit_button.text = "Toggle Fast Forward"
+	orbit_button.text = "Fast time: OFF"
 	orbit_button.toggle_mode = true
+	orbit_button.custom_minimum_size = Vector2(0.0, 38.0)
 	orbit_button.focus_mode = Control.FOCUS_NONE
-	orbit_button.add_theme_font_size_override("font_size", 11)
+	orbit_button.add_theme_font_size_override("font_size", 13)
+	_apply_button_theme(orbit_button, Color(0.55, 0.78, 1.0))
+	_make_ui_button(orbit_button)
 	orbit_button.toggled.connect(_on_orbit_fast_forward_toggled)
-	grid.add_child(orbit_button)
-	content.add_child(grid)
+	buttons.add_child(orbit_button)
+	content.add_child(buttons)
 	panel.add_child(content)
 	teleport_root.add_child(panel)
+	debug_buttons = [gravity_button, orbit_button]
 
 
 func _on_gravity_debug_toggled(enabled: bool) -> void:
 	gravity_debug_visible = enabled
+	if gravity_button != null:
+		gravity_button.text = "Gravity: ON" if enabled else "Gravity: OFF"
 
 
 func _on_orbit_fast_forward_toggled(enabled: bool) -> void:
+	if orbit_button != null:
+		orbit_button.text = "Fast time: ON" if enabled else "Fast time: OFF"
 	var celestial_system := get_tree().get_first_node_in_group("celestial_system")
 	if celestial_system != null:
 		celestial_system.set_fast_forward_enabled(enabled)
@@ -177,27 +238,111 @@ func _layout_teleport_menu() -> void:
 	teleport_root.size = get_viewport().get_visible_rect().size
 	if navigation_overlay != null:
 		navigation_overlay.size = teleport_root.size
+	var viewport_size := teleport_root.size
+	var width := clampf(viewport_size.x * 0.22, 236.0, 286.0)
+	width = minf(width, maxf(216.0, viewport_size.x - 32.0))
+	teleport_panel.anchor_left = 1.0
+	teleport_panel.anchor_right = 1.0
+	teleport_panel.anchor_top = 0.0
+	teleport_panel.anchor_bottom = 0.0
+	teleport_panel.offset_left = -width - 16.0
+	teleport_panel.offset_top = 16.0
+	teleport_panel.offset_right = -16.0
+	teleport_panel.offset_bottom = 88.0
+	var debug_top := 108.0
+	var debug_panel := teleport_root.get_node_or_null("GravityDebugPanel") as PanelContainer
+	if debug_panel != null:
+		debug_panel.anchor_left = 1.0
+		debug_panel.anchor_right = 1.0
+		debug_panel.anchor_top = 0.0
+		debug_panel.anchor_bottom = 0.0
+		debug_panel.offset_left = -width - 16.0
+		debug_panel.offset_top = debug_top
+		debug_panel.offset_right = -16.0
+		debug_panel.offset_bottom = debug_top + 98.0
+	if teleport_dropdown != null:
+		teleport_dropdown.anchor_left = 1.0
+		teleport_dropdown.anchor_right = 1.0
+		teleport_dropdown.anchor_top = 0.0
+		teleport_dropdown.anchor_bottom = 0.0
+		teleport_dropdown.offset_left = -width - 16.0
+		teleport_dropdown.offset_top = debug_top
+		teleport_dropdown.offset_right = -16.0
+		teleport_dropdown.offset_bottom = teleport_dropdown.offset_top + minf(370.0, maxf(176.0, viewport_size.y * 0.52))
 
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch and event.pressed and _handle_touch_ui(event.position):
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_TAB or event.physical_keycode == KEY_TAB:
 			planet_markers_visible = not planet_markers_visible
 			get_viewport().set_input_as_handled()
 
 
-func _on_planet_selected(index: int) -> void:
+func _on_planet_selected(body_name: StringName) -> void:
 	var main := get_parent()
 	if main.has_method("spawn_on_planet_named"):
-		main.spawn_on_planet_named(teleport_menu.get_item_metadata(index))
-	teleport_menu.release_focus()
+		main.spawn_on_planet_named(body_name)
+	set_selected_planet(body_name)
+	_dropdown_open = true
+	teleport_dropdown.visible = true
+
+
+func _toggle_planet_dropdown() -> void:
+	_set_planet_dropdown_open(not _dropdown_open)
+
+
+func _set_planet_dropdown_open(open: bool) -> void:
+	_dropdown_open = open
+	teleport_dropdown.visible = open
+	teleport_menu.text = "Hide planets" if open else "Choose planet"
+
+
+func _handle_touch_ui(position_value: Vector2) -> bool:
+	if teleport_menu != null and teleport_menu.get_global_rect().has_point(position_value):
+		_toggle_planet_dropdown()
+		return true
+	if _dropdown_open:
+		for button in planet_buttons:
+			if button.get_global_rect().has_point(position_value):
+				_on_planet_selected(StringName(button.text))
+				return true
+		if teleport_dropdown.get_global_rect().has_point(position_value):
+			return true
+	if gravity_button != null and gravity_button.get_global_rect().has_point(position_value):
+		gravity_button.set_pressed_no_signal(not gravity_button.button_pressed)
+		_on_gravity_debug_toggled(gravity_button.button_pressed)
+		return true
+	if orbit_button != null and orbit_button.get_global_rect().has_point(position_value):
+		orbit_button.set_pressed_no_signal(not orbit_button.button_pressed)
+		_on_orbit_fast_forward_toggled(orbit_button.button_pressed)
+		return true
+	return false
 
 
 func set_selected_planet(body_name: StringName) -> void:
-	for index in teleport_menu.item_count:
-		if teleport_menu.get_item_metadata(index) == body_name:
-			teleport_menu.select(index)
-			return
+	_selected_planet_name = String(body_name)
+	if teleport_menu != null:
+		teleport_menu.text = "Hide planets" if _dropdown_open else "Choose planet"
+	for button in planet_buttons:
+		button.set_pressed_no_signal(button.text == _selected_planet_name)
+
+
+func is_touch_over_ui(position_value: Vector2) -> bool:
+	if teleport_menu != null and teleport_menu.get_global_rect().has_point(position_value):
+		return true
+	if _dropdown_open and teleport_dropdown != null and teleport_dropdown.get_global_rect().has_point(position_value):
+		return true
+	for button in debug_buttons:
+		if button.get_global_rect().has_point(position_value):
+			return true
+	return false
+
+
+func is_mouse_over_ui(position_value: Vector2) -> bool:
+	return is_touch_over_ui(position_value)
 
 
 func _process(_delta: float) -> void:
@@ -320,3 +465,49 @@ func set_ship(value: RigidBody3D) -> void:
 	hint_label.text = HINT_SHIP if ship else HINT_FOOT
 	if ship:
 		prompt_label.text = ""
+
+
+func _panel_style() -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = UI_PANEL_COLOR
+	style.border_color = UI_BORDER_COLOR
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(12)
+	style.content_margin_left = 12.0
+	style.content_margin_top = 10.0
+	style.content_margin_right = 12.0
+	style.content_margin_bottom = 10.0
+	return style
+
+
+func _apply_button_theme(button: Button, accent: Color) -> void:
+	button.add_theme_stylebox_override("normal", _button_style(Color(0.05, 0.10, 0.20, 0.94), accent.darkened(0.25), 0.5))
+	button.add_theme_stylebox_override("hover", _button_style(Color(0.10, 0.20, 0.34, 0.98), accent, 0.85))
+	button.add_theme_stylebox_override("pressed", _button_style(Color(0.16, 0.32, 0.48, 1.0), accent.lightened(0.1), 1.0))
+	button.add_theme_stylebox_override("focus", _button_style(Color(0.10, 0.20, 0.34, 0.98), accent, 0.95))
+	button.add_theme_color_override("font_color", Color(0.88, 0.95, 1.0))
+	button.add_theme_color_override("font_hover_color", Color.WHITE)
+	button.add_theme_color_override("font_pressed_color", Color.WHITE)
+
+
+func _make_ui_button(button: Button) -> void:
+	button.mouse_filter = Control.MOUSE_FILTER_STOP
+	button.gui_input.connect(_consume_ui_pointer.bind(button))
+
+
+func _consume_ui_pointer(event: InputEvent, button: Button) -> void:
+	if event is InputEventMouseButton:
+		button.accept_event()
+
+
+func _button_style(fill: Color, border: Color, border_alpha: float) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = fill
+	style.border_color = Color(border, border_alpha)
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(9)
+	style.content_margin_left = 10.0
+	style.content_margin_top = 7.0
+	style.content_margin_right = 10.0
+	style.content_margin_bottom = 7.0
+	return style
