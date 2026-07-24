@@ -7,3 +7,4 @@ export_presets.cfg
 .editorconfig
 tests/
 .claude
+tmp/

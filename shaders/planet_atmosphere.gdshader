@@ -4,6 +4,7 @@ render_mode unshaded, cull_disabled, depth_draw_never, depth_test_disabled, fog_
 uniform sampler2D screen_texture : hint_screen_texture, filter_linear;
 uniform sampler2D depth_texture : hint_depth_texture, filter_nearest;
 uniform sampler2D baked_optical_depth : filter_linear, repeat_disable;
+uniform sampler2D blue_noise : filter_nearest, repeat_enable;
 
 uniform vec3 planet_center = vec3(0.0);
 uniform float planet_radius = 46.0;
@@ -14,6 +15,8 @@ uniform int in_scattering_points = 10;
 uniform vec3 scattering_coefficients = vec3(2.26359, 6.88789, 12.1383);
 uniform float intensity = 1.0;
 uniform float density_falloff = 4.3;
+uniform float dither_strength = 0.3;
+uniform float dither_scale = 3.89;
 
 const float MAX_DISTANCE = 3.402823466e+38;
 
@@ -55,9 +58,9 @@ float optical_depth_between(vec3 origin, vec3 direction, float ray_length) {
 	return mix(backward_depth, forward_depth, blend_weight);
 }
 
-vec3 calculate_light(vec3 origin, vec3 direction, float ray_length, vec3 original_color, int sample_count) {
-	vec3 point = origin;
+vec3 calculate_light(vec3 origin, vec3 direction, float ray_length, vec3 original_color, int sample_count, float jitter) {
 	float step_size = ray_length / float(sample_count - 1);
+	vec3 point = origin + direction * step_size * jitter;
 	vec3 in_scattered_light = vec3(0.0);
 	float view_ray_optical_depth = 0.0;
 	for (int index = 0; index < in_scattering_points; index++) {
@@ -105,7 +108,8 @@ void fragment() {
 	if (ray_length > 0.0) {
 		const float epsilon = 0.0001;
 		vec3 ray_origin = CAMERA_POSITION_WORLD + ray_direction * (atmosphere_hit.x + epsilon);
-		ALBEDO = calculate_light(ray_origin, ray_direction, ray_length - epsilon * 2.0, original_color, in_scattering_points);
+		float jitter = textureLod(blue_noise, SCREEN_UV * dither_scale + vec2(fract(TIME * 0.031)), 0.0).r;
+		ALBEDO = calculate_light(ray_origin, ray_direction, ray_length - epsilon * 2.0, original_color, in_scattering_points, jitter * dither_strength);
 	} else {
 		ALBEDO = original_color;
 	}

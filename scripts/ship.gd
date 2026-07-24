@@ -8,6 +8,8 @@ const WATER_HALF_HEIGHT := 2.7
 const WATER_BUOYANCY := 1.15
 const WATER_LINEAR_DRAG := 2.0
 const WATER_ANGULAR_DRAG := 1.5
+const GROUND_LEVEL_TORQUE := 18.0
+const HARD_LANDING_SPEED := 6.0
 # Quaternius "Spaceship_BarbaraTheBee" (Ultimate Space Kit, CC0). Model faces +Z,
 # rotated PI so the glass dome looks down ship -Z (Godot forward). Hull is
 # single-sided: from the pilot camera inside, backfaces cull away and the view
@@ -20,6 +22,10 @@ var cockpit_cam: Camera3D
 var exit_pos := Vector3(3.0, -1.6, 0.0)
 
 var dark_mat: StandardMaterial3D
+var _thrusters: Array[GPUParticles3D] = []
+var _hatch_pivot: Node3D
+var _hatch_target := -1.15
+var _had_ground_contact := false
 
 
 func _ready() -> void:
@@ -29,6 +35,8 @@ func _ready() -> void:
 	linear_damp = 0.0
 	can_sleep = false
 	continuous_cd = true
+	contact_monitor = true
+	max_contacts_reported = 6
 	center_of_mass_mode = RigidBody3D.CENTER_OF_MASS_MODE_CUSTOM
 	center_of_mass = Vector3(0, -0.8, 0)
 
@@ -53,11 +61,17 @@ func _ready() -> void:
 			_leg(Vector3(x, -1.0, z))
 
 	_build_cockpit()
+	_build_thrusters()
 
 	cockpit_cam = Camera3D.new()
 	cockpit_cam.position = Vector3(0, 1.0, -1.4)
 	cockpit_cam.far = 8000.0
 	add_child(cockpit_cam)
+
+
+func _process(delta: float) -> void:
+	if _hatch_pivot != null:
+		_hatch_pivot.rotation.z = lerp_angle(_hatch_pivot.rotation.z, _hatch_target, clampf(delta * 4.5, 0.0, 1.0))
 
 
 func _build_cockpit() -> void:
@@ -83,6 +97,49 @@ func _build_cockpit() -> void:
 	seat.position = Vector3(0, -1.0, -2.0)
 	add_child(seat)
 	seat.ship = self
+	_hatch_pivot = Node3D.new()
+	_hatch_pivot.position = Vector3(1.55, 0.75, -0.55)
+	add_child(_hatch_pivot)
+	var hatch := MeshInstance3D.new()
+	var hatch_mesh := BoxMesh.new()
+	hatch_mesh.size = Vector3(0.12, 1.35, 1.55)
+	hatch_mesh.material = dark_mat
+	hatch.mesh = hatch_mesh
+	hatch.position = Vector3(0.0, 0.62, 0.0)
+	_hatch_pivot.add_child(hatch)
+
+
+func _build_thrusters() -> void:
+	for x in [-0.72, 0.72]:
+		var particles := GPUParticles3D.new()
+		particles.amount = 28
+		particles.lifetime = 0.38
+		particles.randomness = 0.45
+		particles.position = Vector3(x, 0.15, 1.65)
+		var process_material := ParticleProcessMaterial.new()
+		process_material.direction = Vector3(0.0, 0.0, 1.0)
+		process_material.spread = 8.0
+		process_material.initial_velocity_min = 3.5
+		process_material.initial_velocity_max = 7.0
+		process_material.gravity = Vector3.ZERO
+		process_material.scale_min = 0.12
+		process_material.scale_max = 0.28
+		process_material.color = Color(0.25, 0.75, 1.0, 0.85)
+		particles.process_material = process_material
+		var quad := QuadMesh.new()
+		quad.size = Vector2(0.32, 0.32)
+		var flame_material := StandardMaterial3D.new()
+		flame_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		flame_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		flame_material.albedo_color = Color(0.18, 0.62, 1.0, 0.8)
+		flame_material.emission_enabled = true
+		flame_material.emission = Color(0.08, 0.42, 1.0)
+		flame_material.emission_energy_multiplier = 4.0
+		quad.material = flame_material
+		particles.draw_pass_1 = quad
+		particles.emitting = false
+		add_child(particles)
+		_thrusters.append(particles)
 
 
 func _box(size: Vector3, pos: Vector3) -> void:
@@ -164,7 +221,21 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 			var source_velocity: Vector3 = source.get("orbital_velocity")
 			state.apply_central_force(-(state.linear_velocity - source_velocity) * mass * WATER_LINEAR_DRAG * submerged)
 			state.apply_torque(-state.angular_velocity * mass * WATER_ANGULAR_DRAG * submerged)
+	var ground_contact := state.get_contact_count() > 0 and source != null
+	if ground_contact:
+		var local_up := (global_position - source.global_position).normalized()
+		var level_axis := global_basis.y.cross(local_up)
+		state.apply_torque(level_axis * GROUND_LEVEL_TORQUE * mass - state.angular_velocity * mass * 2.5)
+		if not _had_ground_contact:
+			var source_velocity: Vector3 = source.get("orbital_velocity")
+			var impact_speed := absf((state.linear_velocity - source_velocity).dot(local_up))
+			if impact_speed >= HARD_LANDING_SPEED:
+				var main := get_tree().current_scene
+				if main != null and main.has_method("trigger_camera_shake"):
+					main.trigger_camera_shake(clampf(impact_speed * 0.006, 0.035, 0.10), 0.42)
+	_had_ground_contact = ground_contact
 	if pilot == null:
+		_set_thrusters(false)
 		return
 
 	var thrust := Vector3(
@@ -174,6 +245,7 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 	)
 	if thrust.length_squared() > 0.0:
 		state.apply_central_force(global_basis * thrust.limit_length(1.0) * THRUST_ACCEL * mass)
+	_set_thrusters(thrust.length_squared() > 0.01)
 
 	if Input.is_action_pressed("brake") and state.linear_velocity.length() > 0.3:
 		state.apply_central_force(-state.linear_velocity.normalized() * BRAKE_ACCEL * mass)
@@ -194,6 +266,7 @@ func enter_pilot(player: Node3D) -> void:
 	if pilot != null:
 		return
 	pilot = player
+	_hatch_target = 0.0
 	player.set_piloting(true)
 	cockpit_cam.current = true
 	mouse_delta = Vector2.ZERO
@@ -212,6 +285,8 @@ func exit_pilot() -> void:
 	pilot.velocity = linear_velocity + angular_velocity.cross(exit_world - global_position)
 	pilot.ensure_surface_clearance(0.35)
 	pilot = null
+	_hatch_target = -1.15
+	_set_thrusters(false)
 	var hud := get_tree().get_first_node_in_group("hud")
 	if hud:
 		hud.set_ship(null)
@@ -223,3 +298,8 @@ func reset(t: Transform3D, inherited_velocity := Vector3.ZERO) -> void:
 	global_transform = t
 	linear_velocity = inherited_velocity
 	angular_velocity = Vector3.ZERO
+
+
+func _set_thrusters(enabled: bool) -> void:
+	for thruster in _thrusters:
+		thruster.emitting = enabled

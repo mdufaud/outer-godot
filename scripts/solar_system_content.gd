@@ -10,6 +10,8 @@ static func get_body_definitions() -> Array[Dictionary]:
 			"data": {
 				"body_kind": "earth", "radius": 46.0, "gravity": 8.0, "seed": 93847,
 				"velocity": Vector3(0.0, 0.0, -33.6811247882), "ocean": true, "atmosphere": true,
+				"ocean_foam_scale": 1.6, "ocean_foam_distance": 0.85, "ocean_refraction_strength": 0.0025,
+				"underwater_tint": Color(0.08, 0.38, 0.48), "underwater_darkness": 0.42,
 			},
 		},
 		{
@@ -33,6 +35,8 @@ static func get_body_definitions() -> Array[Dictionary]:
 				"ocean_wave_scale": 18.6, "ocean_wave_speed": 0.5, "ocean_smoothness": 0.842,
 				"ocean_depth_multiplier": 39.1, "ocean_alpha_multiplier": 140.3,
 				"ocean_specular_color": Color.WHITE, "atmosphere": false,
+				"ocean_foam_scale": 0.9, "ocean_foam_distance": 0.35, "ocean_refraction_strength": 0.001,
+				"underwater_tint": Color(0.62, 0.08, 0.015), "underwater_darkness": 0.62,
 			},
 		},
 		{
@@ -45,6 +49,8 @@ static func get_body_definitions() -> Array[Dictionary]:
 				"ocean_deep_color": Color(0.0, 0.8329468, 1.0), "ocean_wave_strength": 0.759,
 				"ocean_wave_scale": 20.0, "ocean_wave_speed": 0.5, "ocean_smoothness": 0.882,
 				"ocean_depth_multiplier": 15.0, "ocean_alpha_multiplier": 70.0,
+				"ocean_foam_scale": 1.8, "ocean_foam_distance": 1.1, "ocean_refraction_strength": 0.002,
+				"underwater_tint": Color(0.04, 0.44, 0.55), "underwater_darkness": 0.50,
 				"atmosphere": true, "atmosphere_scale": 0.588, "atmosphere_density_falloff": 6.0,
 				"atmosphere_wavelengths": Vector3(678.0, 815.8, 479.9),
 				"atmosphere_scattering_strength": 26.51, "atmosphere_intensity": 0.25,
@@ -62,6 +68,8 @@ static func get_body_definitions() -> Array[Dictionary]:
 				"ocean_wave_scale": 34.0, "ocean_wave_speed": 1.35, "ocean_smoothness": 0.94,
 				"ocean_depth_multiplier": 5.0, "ocean_alpha_multiplier": 3.8,
 				"ocean_specular_color": Color(0.28, 0.5, 0.54), "atmosphere": false,
+				"ocean_foam_scale": 2.3, "ocean_foam_distance": 1.7, "ocean_refraction_strength": 0.0015,
+				"underwater_tint": Color(0.015, 0.16, 0.19), "underwater_darkness": 0.68,
 			},
 		},
 		{

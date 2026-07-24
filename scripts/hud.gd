@@ -1,5 +1,7 @@
 extends CanvasLayer
 
+const BonificationMathScript := preload("res://scripts/bonification_math.gd")
+
 class NavigationOverlay extends Control:
 	var hud: CanvasLayer
 
@@ -31,15 +33,20 @@ var celestial_bodies: Array[Node3D] = []
 var gravity_debug_visible := false
 var _dropdown_open := false
 var _selected_planet_name := ""
+var locked_body: Node3D
+var aimed_body: Node3D
 
 const HINT_FOOT := "WASD walk/jetpack · Space/Shift ascend/descend · X brake · E interact · Tab markers · R respawn"
-const HINT_SHIP := "WASD thrust · Space/Shift up/down · Mouse steer · Z/C roll · X brake · Tab markers · E exit"
+const HINT_SHIP := "WASD thrust · Space/Shift up/down · Mouse steer · LMB lock · Z/C roll · X brake · Tab markers · E exit"
 const MARKER_MARGIN := 42.0
 const SHIP_COLOR := Color(0.35, 0.85, 1.0, 0.9)
 const PLANET_COLOR := Color(1.0, 0.82, 0.42, 0.82)
 const UI_PANEL_COLOR := Color(0.025, 0.045, 0.10, 0.94)
 const UI_BORDER_COLOR := Color(0.22, 0.55, 0.86, 0.65)
 const UI_ACCENT_COLOR := Color(0.35, 0.82, 1.0)
+const TARGET_COLOR := Color(0.35, 0.92, 1.0, 0.95)
+const AIM_COLOR := Color(1.0, 0.82, 0.38, 0.75)
+const LOCK_ANGLE := deg_to_rad(30.0)
 const GRAVITY_COLORS := [
 	Color(1.0, 0.4, 0.3, 0.9),
 	Color(0.4, 0.85, 1.0, 0.9),
@@ -279,6 +286,10 @@ func _input(event: InputEvent) -> void:
 		if event.keycode == KEY_TAB or event.physical_keycode == KEY_TAB:
 			planet_markers_visible = not planet_markers_visible
 			get_viewport().set_input_as_handled()
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed and ship != null:
+		if not is_mouse_over_ui(event.position):
+			locked_body = null if locked_body == aimed_body else aimed_body
+			get_viewport().set_input_as_handled()
 
 
 func _on_planet_selected(body_name: StringName) -> void:
@@ -348,7 +359,11 @@ func is_mouse_over_ui(position_value: Vector2) -> bool:
 func _process(_delta: float) -> void:
 	if ship == null:
 		info_label.text = ""
+		aimed_body = null
+		locked_body = null
 		return
+	var camera := get_viewport().get_camera_3d()
+	aimed_body = find_aimed_body(camera, celestial_bodies) if camera != null else null
 	var speed := ship.linear_velocity.length()
 	var altitude: float = Gravity.get_altitude(ship.global_position)
 	var text := "Speed: %.1f m/s" % speed
@@ -369,6 +384,10 @@ func draw_navigation(canvas: Control) -> void:
 		if planet_markers_visible or gravity_debug_visible and _has_active_gravity(body, camera.global_position):
 			_draw_marker(canvas, camera, body.global_position, body.name, PLANET_COLOR)
 	_draw_gravity_debug(canvas, camera)
+	if aimed_body != null and aimed_body != locked_body:
+		_draw_target(canvas, camera, aimed_body, false)
+	if locked_body != null and is_instance_valid(locked_body):
+		_draw_target(canvas, camera, locked_body, true)
 
 
 func _draw_marker(canvas: Control, camera: Camera3D, world_position: Vector3, marker_name: String, color: Color) -> void:
@@ -446,6 +465,77 @@ func _draw_gravity_debug(canvas: Control, camera: Camera3D) -> void:
 		canvas.draw_string(ThemeDB.fallback_font, end + Vector2(9.0, -7.0), text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 12, color)
 
 
+func _draw_target(canvas: Control, camera: Camera3D, body: Node3D, locked: bool) -> void:
+	if camera.is_position_behind(body.global_position):
+		return
+	var center := camera.unproject_position(body.global_position)
+	var radius := float(body.get("radius"))
+	var edge := camera.unproject_position(body.global_position + camera.global_basis.x * radius)
+	var ring_radius := clampf(center.distance_to(edge) * (1.12 if locked else 1.06), 13.0, 260.0)
+	var color := TARGET_COLOR if locked else AIM_COLOR
+	canvas.draw_arc(center, ring_radius, 0.0, TAU, 48, color, 2.2 if locked else 1.2, true)
+	if not locked or ship == null:
+		return
+	var direction := (body.global_position - camera.global_position).normalized()
+	var surface_radius := radius
+	if body.has_method("get_surface_radius_towards"):
+		surface_radius = float(body.get_surface_radius_towards(-direction))
+	var surface_distance := maxf(camera.global_position.distance_to(body.global_position) - surface_radius, 0.0)
+	var relative := relative_velocity_components(ship.linear_velocity, body.get("orbital_velocity"), direction, camera.global_basis.y, camera.global_basis.x)
+	var fade := smoothstep(18.0, 140.0, surface_distance)
+	var faded_color := Color(color, color.a * fade)
+	var label := "%s\n%s  %+.1f m/s" % [body.name, _format_distance(surface_distance), relative.z]
+	canvas.draw_multiline_string(ThemeDB.fallback_font, center + Vector2(ring_radius + 12.0, -8.0), label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 14, -1, faded_color)
+	_draw_velocity_indicator(canvas, center, ring_radius, Vector2.RIGHT, relative.x, faded_color)
+	_draw_velocity_indicator(canvas, center, ring_radius, Vector2.UP, relative.y, faded_color)
+
+
+func _draw_velocity_indicator(canvas: Control, center: Vector2, ring_radius: float, axis: Vector2, velocity: float, color: Color) -> void:
+	if absf(velocity) < 0.15 or color.a <= 0.01:
+		return
+	var direction := axis * signf(velocity)
+	var start := center + direction * ring_radius
+	var length := clampf(absf(velocity) * 0.75, 10.0, 170.0)
+	var end := start + direction * length
+	canvas.draw_line(start, end, color, 2.4, true)
+	_draw_chevron(canvas, end, direction, color)
+
+
+static func relative_velocity_components(ship_velocity: Vector3, body_velocity: Vector3, direction_to_body: Vector3, camera_up: Vector3, camera_right: Vector3) -> Vector3:
+	return BonificationMathScript.relative_velocity_components(ship_velocity, body_velocity, direction_to_body, camera_up, camera_right)
+
+
+static func ray_sphere_distance(center: Vector3, radius: float, origin: Vector3, direction: Vector3) -> float:
+	return BonificationMathScript.ray_sphere_distance(center, radius, origin, direction)
+
+
+static func find_aimed_body(camera: Camera3D, bodies: Array[Node3D]) -> Node3D:
+	var best: Node3D
+	var nearest := INF
+	var direction := -camera.global_basis.z
+	for body in bodies:
+		if not is_instance_valid(body):
+			continue
+		var hit := ray_sphere_distance(body.global_position, float(body.get("radius")), camera.global_position, direction)
+		if hit < nearest:
+			nearest = hit
+			best = body
+	if best != null:
+		return best
+	var best_angle := LOCK_ANGLE
+	for body in bodies:
+		if not is_instance_valid(body):
+			continue
+		var offset := body.global_position - camera.global_position
+		if offset.length_squared() < 0.0001:
+			continue
+		var angle := direction.angle_to(offset)
+		if angle < best_angle:
+			best_angle = angle
+			best = body
+	return best
+
+
 func _has_active_gravity(body: Node3D, observer_position: Vector3) -> bool:
 	return Gravity.get_gravity_from(body, observer_position).length_squared() > 0.0
 
@@ -465,6 +555,9 @@ func set_ship(value: RigidBody3D) -> void:
 	hint_label.text = HINT_SHIP if ship else HINT_FOOT
 	if ship:
 		prompt_label.text = ""
+	else:
+		locked_body = null
+		aimed_body = null
 
 
 func _panel_style() -> StyleBoxFlat:

@@ -8,6 +8,10 @@ const MoonNoiseTexture := preload("res://assets/planet_textures/moon_noise.png")
 const CraterEjectaTexture := preload("res://assets/planet_textures/crater_ejecta_ray.png")
 const MoonFlatNormalTexture := preload("res://assets/planet_textures/moon_normal_flat.png")
 const MoonSteepNormalTexture := preload("res://assets/planet_textures/moon_normal_steep.png")
+const OceanWaveATexture := preload("res://assets/ocean_textures/wave_a.png")
+const OceanWaveBTexture := preload("res://assets/ocean_textures/wave_b.png")
+const OceanFoamTexture := preload("res://assets/ocean_textures/water_foam.png")
+const BlueNoiseTexture := preload("res://assets/planet_textures/blue_noise.png")
 const MESH_CACHE_VERSION := 3
 
 static var _topology_cache: Dictionary = {}
@@ -33,6 +37,11 @@ static var _topology_mutex := Mutex.new()
 @export var ocean_depth_multiplier := 15.0
 @export var ocean_alpha_multiplier := 70.0
 @export var ocean_specular_color := Color(0.9669199, 1.0, 0.8820755)
+@export var ocean_foam_scale := 1.4
+@export var ocean_foam_distance := 0.9
+@export var ocean_refraction_strength := 0.003
+@export var underwater_tint := Color(0.1, 0.4, 0.5)
+@export var underwater_darkness := 0.45
 @export var has_atmosphere := true
 @export var atmosphere_color := Color(0.18, 0.48, 1.0)
 @export var atmosphere_scale := 0.322
@@ -101,6 +110,7 @@ func _process(delta: float) -> void:
 	_poll_atmosphere_lut()
 	_update_lod()
 	_update_lighting()
+	_update_atmosphere_visibility()
 	_update_storms(delta)
 
 
@@ -130,6 +140,23 @@ func get_boot_progress() -> float:
 
 func is_boot_ready() -> bool:
 	return _collision_ready and _lod_meshes.size() == _lod_resolutions.size() and (not has_atmosphere or _atmosphere_lut_bound)
+
+
+func get_boot_status() -> Dictionary:
+	var status := {
+		"progress": get_boot_progress(),
+		"ready": is_boot_ready(),
+		"stage": "ready" if is_boot_ready() else "waiting",
+	}
+	if not _boot_jobs.is_empty():
+		var job: Dictionary = _boot_jobs[0]
+		status.stage = String(job.phase)
+		status.job = String(job.kind)
+		status.resolution = int(job.resolution)
+		status.remaining_jobs = _boot_jobs.size()
+	elif has_atmosphere and not _atmosphere_lut_bound:
+		status.stage = "atmosphere LUT: %s" % String(_atmosphere_lut.get_status())
+	return status
 
 
 func set_orbital_state(next_position: Vector3, next_velocity: Vector3) -> void:
@@ -382,6 +409,15 @@ func _build_ocean() -> void:
 	_ocean_material.set_shader_parameter("depth_multiplier", ocean_depth_multiplier)
 	_ocean_material.set_shader_parameter("alpha_multiplier", ocean_alpha_multiplier)
 	_ocean_material.set_shader_parameter("specular_color", ocean_specular_color)
+	_ocean_material.set_shader_parameter("wave_normal_a", OceanWaveATexture)
+	_ocean_material.set_shader_parameter("wave_normal_b", OceanWaveBTexture)
+	_ocean_material.set_shader_parameter("foam_texture", OceanFoamTexture)
+	_ocean_material.set_shader_parameter("foam_scale", ocean_foam_scale)
+	_ocean_material.set_shader_parameter("foam_distance", ocean_foam_distance)
+	_ocean_material.set_shader_parameter("refraction_strength", ocean_refraction_strength)
+	if quality_profile == "mobile_low":
+		_ocean_material.set_shader_parameter("foam_distance", ocean_foam_distance * 0.65)
+		_ocean_material.set_shader_parameter("refraction_strength", 0.0)
 	if body_kind == "cyclops":
 		_ocean_material.set_shader_parameter("ambient_color", Color(0.08, 0.3, 0.29))
 		_ocean_material.set_shader_parameter("ambient_strength", 0.24)
@@ -412,6 +448,7 @@ func _build_atmosphere() -> void:
 		pow(400.0 / atmosphere_wavelengths.z, 4.0)
 	) * atmosphere_scattering_strength)
 	_atmosphere_material.set_shader_parameter("intensity", atmosphere_intensity)
+	_atmosphere_material.set_shader_parameter("blue_noise", BlueNoiseTexture)
 	_atmosphere_mesh.mesh = mesh
 	_atmosphere_mesh.material_override = _atmosphere_material
 	_atmosphere_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -569,6 +606,14 @@ func _poll_atmosphere_lut() -> void:
 	_atmosphere_lut_bound = true
 
 
+func _update_atmosphere_visibility() -> void:
+	if _atmosphere_mesh == null or not _atmosphere_lut_bound:
+		return
+	var camera := get_viewport().get_camera_3d()
+	var camera_underwater := camera != null and has_ocean and get_water_depth(camera.global_position) > 0.0
+	_atmosphere_mesh.visible = not camera_underwater
+
+
 func _update_lod() -> void:
 	var camera := get_viewport().get_camera_3d()
 	if camera == null:
@@ -608,7 +653,10 @@ func _update_lighting() -> void:
 
 
 func get_generator_error() -> String:
-	return String(_height_generator.get_error()) if _height_generator != null else ""
+	var height_error := String(_height_generator.get_error()) if _height_generator != null else ""
+	if not height_error.is_empty():
+		return height_error
+	return String(_atmosphere_lut.get_error()) if _atmosphere_lut != null else ""
 
 
 func _load_cached_mesh(purpose: String, resolution: int) -> ArrayMesh:

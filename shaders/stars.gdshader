@@ -1,5 +1,24 @@
 shader_type sky;
 
+uniform vec3 camera_position = vec3(0.0);
+uniform vec3 sun_direction = vec3(1.0, 0.0, 0.0);
+uniform float daylight = 0.0;
+uniform float underwater_strength = 0.0;
+uniform int ocean_count = 0;
+uniform vec4 ocean_spheres[8];
+
+bool ray_hits_sphere(vec3 origin, vec3 direction, vec4 sphere) {
+	vec3 offset = origin - sphere.xyz;
+	float b = dot(offset, direction);
+	float c = dot(offset, offset) - sphere.w * sphere.w;
+	float discriminant = b * b - c;
+	if (discriminant < 0.0) {
+		return false;
+	}
+	float root = sqrt(discriminant);
+	return -b + root > 0.0 && max(-b - root, 0.0) < 1000000.0;
+}
+
 float hash3(vec3 p) {
 	p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
 	p *= 17.0;
@@ -61,9 +80,21 @@ void sky() {
 	vec3 col = vec3(0.002, 0.004, 0.009);
 	float haze = smoothstep(0.42, 0.82, fbm(dir * 2.4 + 17.0));
 	col += vec3(0.008, 0.012, 0.022) * haze;
-	col += star_layer(dir, 360.0, 0.035, 0.18, 0.015, 0.0);
-	col += star_layer(dir, 150.0, 0.018, 0.32, 0.025, 0.04);
-	col += star_layer(dir, 62.0, 0.009, 0.58, 0.04, 0.08);
+	vec3 stars = star_layer(dir, 360.0, 0.035, 0.18, 0.015, 0.0);
+	stars += star_layer(dir, 150.0, 0.018, 0.32, 0.025, 0.04);
+	stars += star_layer(dir, 62.0, 0.009, 0.58, 0.04, 0.08);
+	float ocean_mask = 1.0;
+	for (int index = 0; index < 8; index++) {
+		if (index >= ocean_count) {
+			break;
+		}
+		if (ray_hits_sphere(camera_position, dir, ocean_spheres[index])) {
+			ocean_mask = 0.0;
+		}
+	}
+	float sun_fade = 1.0 - smoothstep(0.65, 0.995, dot(dir, normalize(sun_direction)));
+	stars *= ocean_mask * sun_fade * (1.0 - daylight * 0.96) * (1.0 - underwater_strength);
+	col += stars;
 
 	COLOR = col;
 }
