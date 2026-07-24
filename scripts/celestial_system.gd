@@ -22,6 +22,7 @@ var _time_multiplier := 1.0
 
 func _ready() -> void:
 	add_to_group("celestial_system")
+	add_to_group("origin_shift_listener")
 	process_physics_priority = -100
 	for body in get_tree().get_nodes_in_group("celestial_body"):
 		bodies.append(body)
@@ -40,6 +41,10 @@ func _physics_process(delta: float) -> void:
 	_update_circular_orbit("Cyclops")
 	_update_circular_orbit("Tumbling Bean")
 	_update_circular_orbit("Watchful Eye")
+
+
+func apply_origin_shift(offset: Vector3) -> void:
+	_sun_start += offset
 
 
 func set_fast_forward_enabled(enabled: bool) -> void:

@@ -9,6 +9,7 @@ const UNDERWATER_SHADER := preload("res://shaders/underwater.gdshader")
 const CameraShakeScript := preload("res://scripts/camera_shake.gd")
 const BonificationMathScript := preload("res://scripts/bonification_math.gd")
 const SolarSystemContentScript := preload("res://scripts/solar_system_content.gd")
+const FloatingOriginScript := preload("res://scripts/floating_origin.gd")
 
 const SUN_RADIUS := 345.0
 const SUN_SURFACE_GRAVITY := 50.0
@@ -110,6 +111,9 @@ func _boot() -> void:
 		var touch := preload("res://scripts/touch_hud.gd").new()
 		touch.main = self
 		layer.add_child(touch)
+	var floating_origin := FloatingOriginScript.new()
+	floating_origin.name = "FloatingOrigin"
+	add_child(floating_origin)
 	_loaded = true
 	_log_boot("Boot complete")
 	get_viewport().size_changed.disconnect(_resize_loading_screen)
