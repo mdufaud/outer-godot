@@ -2,6 +2,8 @@ extends RefCounted
 
 const SHADER_PATH := "res://shaders/planet_height.comp"
 const SHADING_SHADER_PATH := "res://shaders/planet_shading.comp"
+const PERTURB_SHADER_PATH := "res://shaders/planet_perturb.comp"
+const PERTURB_SCALE := 50.0
 const WORKGROUP_SIZE := 256
 
 static var _shared_pipelines: Dictionary = {}
@@ -29,11 +31,14 @@ var _ejecta_craters: Array[Vector4] = []
 var _shading_settings_bytes := PackedByteArray()
 var _moon_points_bytes := PackedByteArray()
 var _ejecta_craters_bytes := PackedByteArray()
-var _state := {"initialized": false, "busy": false, "error": "", "result": PackedFloat32Array(), "shading_result": PackedFloat32Array()}
+var _state := {"initialized": false, "busy": false, "error": "", "result": PackedFloat32Array(), "shading_result": PackedFloat32Array(), "perturb_result": PackedVector3Array()}
 var _pending_positions := PackedByteArray()
 var _pending_count := 0
 var _pending_shading_positions := PackedByteArray()
 var _pending_shading_count := 0
+var _pending_perturb_positions := PackedByteArray()
+var _pending_perturb_count := 0
+var _pending_perturb_strength := 0.0
 
 var _rd: RenderingDevice
 var _shader := RID()
@@ -43,6 +48,11 @@ var _crater_buffer := RID()
 var _positions_buffer := RID()
 var _heights_buffer := RID()
 var _uniform_set := RID()
+var _perturb_shader := RID()
+var _perturb_pipeline := RID()
+var _perturb_in_buffer := RID()
+var _perturb_out_buffer := RID()
+var _perturb_uniform_set := RID()
 var _shading_shader := RID()
 var _shading_pipeline := RID()
 var _shading_settings_buffer := RID()
@@ -58,7 +68,7 @@ func _init(body_kind: String, seed: int) -> void:
 	match body_kind:
 		"moon", "tumbling_bean", "watchful_eye":
 			_body_kind = MOON
-		"alien", "cyclops":
+		"alien", "cyclops", "mirage":
 			_body_kind = ALIEN
 		"shattered", "icey_twin":
 			_body_kind = SHATTERED
@@ -118,6 +128,30 @@ func request_shading(directions: PackedVector3Array) -> bool:
 	_state.busy = true
 	RenderingServer.call_on_render_thread(_generate_shading_render.bind(positions, directions.size()))
 	return true
+
+
+func request_perturb(points: PackedVector3Array, strength: float) -> bool:
+	if _state.busy:
+		return false
+	var positions := points.to_byte_array()
+	if not _state.initialized:
+		_pending_perturb_positions = positions
+		_pending_perturb_count = points.size()
+		_pending_perturb_strength = strength
+		return true
+	_state.busy = true
+	RenderingServer.call_on_render_thread(_generate_perturb_render.bind(positions, points.size(), strength))
+	return true
+
+
+func has_perturb_result() -> bool:
+	return not _state.perturb_result.is_empty()
+
+
+func take_perturb_result() -> PackedVector3Array:
+	var result: PackedVector3Array = _state.perturb_result
+	_state.perturb_result = PackedVector3Array()
+	return result
 
 
 func has_shading_result() -> bool:
@@ -189,6 +223,12 @@ func _initialize_render() -> void:
 	if ejecta_data.is_empty():
 		ejecta_data.resize(16)
 	_ejecta_craters_buffer = _rd.storage_buffer_create(ejecta_data.size(), ejecta_data)
+	var perturb_pipeline := _shared_pipeline(PERTURB_SHADER_PATH)
+	if perturb_pipeline.has("error"):
+		_state.error = perturb_pipeline.error
+		return
+	_perturb_shader = perturb_pipeline.shader
+	_perturb_pipeline = perturb_pipeline.pipeline
 	_state.initialized = true
 	if _pending_count > 0:
 		var positions := _pending_positions
@@ -204,6 +244,15 @@ func _initialize_render() -> void:
 		_pending_shading_count = 0
 		_state.busy = true
 		_generate_shading_render(shading_positions, shading_count)
+	elif _pending_perturb_count > 0:
+		var perturb_positions := _pending_perturb_positions
+		var perturb_count := _pending_perturb_count
+		var perturb_strength := _pending_perturb_strength
+		_pending_perturb_positions = PackedByteArray()
+		_pending_perturb_count = 0
+		_pending_perturb_strength = 0.0
+		_state.busy = true
+		_generate_perturb_render(perturb_positions, perturb_count, perturb_strength)
 
 
 func _shared_pipeline(path: String) -> Dictionary:
@@ -243,6 +292,32 @@ func _generate_render(positions: PackedByteArray, count: int) -> void:
 	_state.result = result
 
 
+func _generate_perturb_render(positions: PackedByteArray, count: int, strength: float) -> void:
+	_release_perturb_request_resources()
+	_perturb_in_buffer = _rd.storage_buffer_create(positions.size(), positions)
+	_perturb_out_buffer = _rd.storage_buffer_create(positions.size())
+	_perturb_uniform_set = _rd.uniform_set_create([
+		_buffer_uniform(_perturb_in_buffer, 0),
+		_buffer_uniform(_perturb_out_buffer, 1),
+	], _perturb_shader, 0)
+	var constants := PackedInt32Array([count, 0, 0, 0]).to_byte_array()
+	constants.append_array(PackedFloat32Array([strength, PERTURB_SCALE, float(_seed % 1024), 0.0]).to_byte_array())
+	var command_list := _rd.compute_list_begin()
+	_rd.compute_list_bind_compute_pipeline(command_list, _perturb_pipeline)
+	_rd.compute_list_bind_uniform_set(command_list, _perturb_uniform_set, 0)
+	_rd.compute_list_set_push_constant(command_list, constants, constants.size())
+	_rd.compute_list_dispatch(command_list, ceili(float(count) / float(WORKGROUP_SIZE)), 1, 1)
+	_rd.compute_list_end()
+	var result := _rd.buffer_get_data(_perturb_out_buffer).to_float32_array()
+	_release_perturb_request_resources()
+	var points := PackedVector3Array()
+	points.resize(count)
+	for index in count:
+		points[index] = Vector3(result[index * 3], result[index * 3 + 1], result[index * 3 + 2])
+	_state.busy = false
+	_state.perturb_result = points
+
+
 func _generate_shading_render(positions: PackedByteArray, count: int) -> void:
 	_release_shading_request_resources()
 	_shading_positions_buffer = _rd.storage_buffer_create(positions.size(), positions)
@@ -273,6 +348,7 @@ func _free_render() -> void:
 		return
 	_release_request_resources()
 	_release_shading_request_resources()
+	_release_perturb_request_resources()
 	for resource in [_ejecta_craters_buffer, _moon_points_buffer, _shading_settings_buffer, _crater_buffer, _settings_buffer]:
 		if resource.is_valid():
 			_rd.free_rid(resource)
@@ -283,6 +359,8 @@ func _free_render() -> void:
 	_shading_shader = RID()
 	_crater_buffer = RID()
 	_settings_buffer = RID()
+	_perturb_pipeline = RID()
+	_perturb_shader = RID()
 	_pipeline = RID()
 	_shader = RID()
 	_state.initialized = false
@@ -305,6 +383,19 @@ func _release_request_resources() -> void:
 	_uniform_set = RID()
 	_heights_buffer = RID()
 	_positions_buffer = RID()
+
+
+func _release_perturb_request_resources() -> void:
+	if _rd == null:
+		return
+	if _perturb_uniform_set.is_valid() and _rd.uniform_set_is_valid(_perturb_uniform_set):
+		_rd.free_rid(_perturb_uniform_set)
+	for resource in [_perturb_out_buffer, _perturb_in_buffer]:
+		if resource.is_valid():
+			_rd.free_rid(resource)
+	_perturb_uniform_set = RID()
+	_perturb_out_buffer = RID()
+	_perturb_in_buffer = RID()
 
 
 func _release_shading_request_resources() -> void:
@@ -427,10 +518,10 @@ func _build_shading_settings() -> void:
 		_set_shading_simple_noise(0, random, 4, 0.5, 2.0, 1.875925, 1.1754117, 0.0)
 		var detail_warp_elevation := 2.2643394
 		if _profile == "watchful_eye":
-			detail_warp_elevation = 9.4
+			detail_warp_elevation = 6.4
 		_set_shading_simple_noise(3, random, 4, 0.5, 2.0, 2.4969678, detail_warp_elevation, 0.0)
 		if _profile == "watchful_eye":
-			_set_shading_simple_noise(6, random, 5, 0.58, 2.7, 2.1, 1.8, 0.0)
+			_set_shading_simple_noise(6, random, 5, 0.58, 2.7, 1.5, 1.4, 0.0)
 		else:
 			_set_shading_simple_noise(6, random, 4, 0.5, 2.34, 1.35, 1.43, 0.0)
 		_build_moon_points(18 if _profile == "watchful_eye" else 32, shading_seed)
@@ -457,6 +548,10 @@ func _build_moon_points(count: int, seed: int) -> void:
 func _build_ejecta_craters(desired_count: int, seed: int, scale: float) -> void:
 	var sorted_craters: Array[Dictionary] = []
 	for crater in _craters:
+		# Hand placed craters are far larger than the field ones, so their ejecta
+		# rays would cover the whole body.
+		if bool(crater.get("forced", false)):
+			continue
 		sorted_craters.append(crater)
 	sorted_craters.sort_custom(func(first: Dictionary, second: Dictionary) -> bool: return float(first.radius) > float(second.radius))
 	var pool_size := clampi(int(float(sorted_craters.size() - 1) * 0.2), 1, sorted_craters.size())
@@ -516,26 +611,54 @@ func _build_moon_settings(random: DotNetRandom) -> void:
 			_set_ridge_noise(16, random, 4, 0.5, 2.0, 15.0, 0.0, 2.0, 1.0, 0.0, 0.0)
 			_build_craters(3000, Vector2(0.012, 0.12), -0.16, 1.22, Vector2(0.4, 1.5), 0.742, 17801)
 		"watchful_eye":
-			_set_simple_noise(10, random, 4, 0.54, 2.0, 0.58, 7.8, 0.0, Vector3(3.0, 14.7, 0.0))
-			_set_ridge_noise(13, random, 4, 0.48, 2.8, 2.4, 3.6, 2.4, 1.0, -0.8, 1.2)
-			_set_ridge_noise(16, random, 5, 0.46, 2.2, 8.5, 1.35, 2.8, 1.0, -0.25, 0.45)
-			_build_craters(85, Vector2(0.012, 0.16), 0.12, 0.72, Vector2(0.18, 0.75), 0.68, 17809)
+			# Kept smooth on purpose: high frequency relief buries the eye.
+			_set_simple_noise(10, random, 4, 0.54, 2.0, 0.58, 3.4, 0.0, Vector3(3.0, 14.7, 0.0))
+			_set_ridge_noise(13, random, 4, 0.48, 2.8, 2.4, 1.2, 2.4, 1.0, -0.8, 1.2)
+			_set_ridge_noise(16, random, 5, 0.46, 2.2, 8.5, 0.35, 2.8, 1.0, -0.25, 0.45)
+			_build_craters(40, Vector2(0.012, 0.1), 0.12, 0.72, Vector2(0.18, 0.75), 0.68, 17809, _eye_craters())
 		_:
-			_set_simple_noise(10, random, 4, 0.5, 2.0, 2.0, 1.0, 0.0)
-			_set_ridge_noise(13, random, 4, 0.42, 5.0, 2.0, 3.0, 3.0, 1.0, 0.0, 2.0)
-			_set_ridge_noise(16, random, 4, 0.6, 2.0, 0.5, 1.0, 2.0, 1.0, 0.0, 0.0)
-			_build_craters(200, Vector2(0.01, 0.1), 0.13, 1.66, Vector2(0.4, 1.5), 0.5, 17801)
+			_set_simple_noise(10, random, 4, 0.5, 2.0, 0.97, 0.0, 0.0)
+			_set_ridge_noise(13, random, 4, 0.5, 5.0, 1.82, -2.84, 2.0, 0.5, 0.0, 3.0)
+			_set_ridge_noise(16, random, 5, 0.5, 2.0, 2.0, 3.0, 0.5, 1.0, 0.0, 0.0)
+			_build_craters(500, Vector2(0.01, 0.15), 0.42, 1.23, Vector2(0.4, 1.5), 0.675, 17801)
 
 
-func _build_craters(count: int, size_range: Vector2, rim_steepness: float, rim_width: float, smooth_range: Vector2, distribution: float, crater_seed: int) -> void:
+# The eye is the whole point of this body, so it is placed by hand instead of
+# hoping the random crater field produces one: a wide smooth socket with a
+# raised dome in the middle. A positive floor makes the crater formula bulge
+# instead of dig, which is what gives the pupil.
+const EYE_DIRECTION := Vector3(0.0, 0.18, 1.0)
+
+
+func _eye_craters() -> Array[Dictionary]:
+	var centre := EYE_DIRECTION.normalized()
+	return [
+		{"centre": centre, "radius": 0.75, "floor": -0.3, "smoothness": 0.55, "forced": true},
+		{"centre": centre, "radius": 0.42, "floor": -0.22, "smoothness": 0.3, "forced": true},
+		{"centre": centre, "radius": 0.22, "floor": 0.9, "smoothness": 0.18, "forced": true},
+	]
+
+
+func _build_craters(count: int, size_range: Vector2, rim_steepness: float, rim_width: float, smooth_range: Vector2, distribution: float, crater_seed: int, forced: Array[Dictionary] = []) -> void:
 	var property_random := DotNetRandom.new(_seed)
 	var direction_random := DotNetRandom.new(_seed + crater_seed)
 	var values := PackedFloat32Array()
-	values.resize(count * 8)
+	values.resize((count + forced.size()) * 8)
+	for index in forced.size():
+		var crater: Dictionary = forced[index]
+		_craters.append(crater.duplicate())
+		var forced_offset := index * 8
+		var centre_value: Vector3 = crater.centre
+		values[forced_offset] = centre_value.x
+		values[forced_offset + 1] = centre_value.y
+		values[forced_offset + 2] = centre_value.z
+		values[forced_offset + 3] = float(crater.radius)
+		values[forced_offset + 4] = float(crater.floor)
+		values[forced_offset + 5] = float(crater.smoothness)
 	for index in count:
 		var t := property_random.value_bias_lower(distribution)
 		var size := lerpf(size_range.x, size_range.y, t)
-		var floor_height := lerpf(-1.2, -0.2, t + property_random.value_bias_lower(0.3))
+		var floor_height := lerpf(-1.2, -0.2, clampf(t + property_random.value_bias_lower(0.3), 0.0, 1.0))
 		var smoothness := lerpf(smooth_range.x, smooth_range.y, 1.0 - t)
 		var centre := _random_unit_direction(direction_random)
 		_craters.append({
@@ -544,7 +667,7 @@ func _build_craters(count: int, size_range: Vector2, rim_steepness: float, rim_w
 			"floor": floor_height,
 			"smoothness": smoothness,
 		})
-		var offset := index * 8
+		var offset := (forced.size() + index) * 8
 		values[offset] = centre.x
 		values[offset + 1] = centre.y
 		values[offset + 2] = centre.z

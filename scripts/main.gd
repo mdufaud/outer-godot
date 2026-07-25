@@ -38,6 +38,7 @@ var _sky_material: ShaderMaterial
 var _camera_shake: Node
 var _ocean_audio: AudioStreamPlayer
 var _wind_audio: AudioStreamPlayer
+var _dread_pulse: Node
 var _was_underwater := false
 var _was_in_atmosphere := false
 var _feedback_initialized := false
@@ -78,12 +79,16 @@ func _boot() -> void:
 		await get_tree().process_frame
 	earth = spawned_bodies["Terra"]
 	moon = spawned_bodies["Luna"]
+	if spawned_bodies.has("Watchful Eye"):
+		_dread_pulse = preload("res://scripts/dread_pulse.gd").new()
+		_dread_pulse.name = "WatchfulEyeDread"
+		_dread_pulse.target = spawned_bodies["Watchful Eye"]
+		add_child(_dread_pulse)
 	_log_boot("Waiting for %d bodies" % spawned_bodies.size())
 	if not await _wait_for_bodies(spawned_bodies.values()):
 		return
 
 	_log_boot("Creating orbital system")
-	_balance_sun_velocity(sun)
 	var celestial_system := preload("res://scripts/celestial_system.gd").new()
 	celestial_system.name = "CelestialSystem"
 	add_child(celestial_system)
@@ -223,8 +228,10 @@ func _update_environment_feedback(delta: float, camera: Camera3D) -> void:
 		in_atmosphere = atmosphere_contains(camera.global_position, source.global_position, float(source.get("radius")), float(source.get("atmosphere_scale")))
 		wind_target = clampf((atmosphere_radius - distance_to_center) / maxf(atmosphere_radius - float(source.get("radius")), 0.001), 0.0, 1.0)
 		wind_target *= 1.0 - _underwater_strength
-	_ocean_audio.volume_linear = move_toward(_ocean_audio.volume_linear, ocean_target * 0.42, delta * 0.6)
-	_wind_audio.volume_linear = move_toward(_wind_audio.volume_linear, wind_target * 0.34, delta * 0.6)
+	var dread := float(_dread_pulse.call("get_dread_factor")) if _dread_pulse != null else 0.0
+	var ambience := 1.0 - dread
+	_ocean_audio.volume_linear = move_toward(_ocean_audio.volume_linear, ocean_target * 0.42 * ambience, delta * 0.6)
+	_wind_audio.volume_linear = move_toward(_wind_audio.volume_linear, wind_target * 0.34 * ambience, delta * 0.6)
 	var underwater := water_depth > 0.0
 	if _feedback_initialized:
 		if underwater != _was_underwater:
@@ -412,7 +419,7 @@ func _spawn_body(body_name: String, position_value: Vector3, data: Dictionary) -
 		"core_radius": "core_radius",
 		"gravity": "surface_gravity",
 		"seed": "rng_seed",
-		"velocity": "initial_velocity",
+		"perturb_strength": "perturb_strength",
 		"ocean": "has_ocean",
 		"ocean_level": "ocean_level",
 		"ocean_shallow_color": "ocean_shallow_color",
@@ -450,18 +457,6 @@ func _spawn_body(body_name: String, position_value: Vector3, data: Dictionary) -
 
 static func get_body_definitions() -> Array[Dictionary]:
 	return SolarSystemContentScript.get_body_definitions()
-
-
-func _balance_sun_velocity(sun: Node) -> void:
-	var momentum := Vector3.ZERO
-	for body in get_tree().get_nodes_in_group("celestial_body"):
-		if body == sun:
-			continue
-		var body_mu := float(body.call("get_gravitational_parameter"))
-		var body_velocity: Vector3 = body.get("orbital_velocity")
-		momentum += body_mu * body_velocity
-	var sun_mu := float(sun.call("get_gravitational_parameter"))
-	sun.set("orbital_velocity", -momentum / sun_mu)
 
 
 func _build_environment() -> void:

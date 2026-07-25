@@ -96,3 +96,5 @@ common/physics_ticks_per_second=120
 
 textures/vram_compression/import_etc2_astc=true
 renderer/rendering_method.mobile="mobile"
+anti_aliasing/quality/screen_space_aa=1
+anti_aliasing/quality/screen_space_aa.mobile=0

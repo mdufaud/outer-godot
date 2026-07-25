@@ -474,7 +474,7 @@ func _draw_target(canvas: Control, camera: Camera3D, body: Node3D, locked: bool)
 	var ring_radius := clampf(center.distance_to(edge) * (1.12 if locked else 1.06), 13.0, 260.0)
 	var color := TARGET_COLOR if locked else AIM_COLOR
 	canvas.draw_arc(center, ring_radius, 0.0, TAU, 48, color, 2.2 if locked else 1.2, true)
-	if not locked or ship == null:
+	if ship == null:
 		return
 	var direction := (body.global_position - camera.global_position).normalized()
 	var surface_radius := radius
@@ -482,12 +482,11 @@ func _draw_target(canvas: Control, camera: Camera3D, body: Node3D, locked: bool)
 		surface_radius = float(body.get_surface_radius_towards(-direction))
 	var surface_distance := maxf(camera.global_position.distance_to(body.global_position) - surface_radius, 0.0)
 	var relative := relative_velocity_components(ship.linear_velocity, body.get("orbital_velocity"), direction, camera.global_basis.y, camera.global_basis.x)
-	var fade := smoothstep(18.0, 140.0, surface_distance)
-	var faded_color := Color(color, color.a * fade)
-	var label := "%s\n%s  %+.1f m/s" % [body.name, _format_distance(surface_distance), relative.z]
-	canvas.draw_multiline_string(ThemeDB.fallback_font, center + Vector2(ring_radius + 12.0, -8.0), label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 14, -1, faded_color)
-	_draw_velocity_indicator(canvas, center, ring_radius, Vector2.RIGHT, relative.x, faded_color)
-	_draw_velocity_indicator(canvas, center, ring_radius, Vector2.UP, relative.y, faded_color)
+	var target_state := "LOCKED" if locked else "TARGET"
+	var label := "%s  %s\nSurface %s\nApproach %+.1f m/s" % [body.name, target_state, _format_distance(surface_distance), relative.z]
+	canvas.draw_multiline_string(ThemeDB.fallback_font, center + Vector2(ring_radius + 12.0, -8.0), label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 14, -1, color)
+	_draw_velocity_indicator(canvas, center, ring_radius, Vector2.RIGHT, relative.x, color)
+	_draw_velocity_indicator(canvas, center, ring_radius, Vector2.UP, relative.y, color)
 
 
 func _draw_velocity_indicator(canvas: Control, center: Vector2, ring_radius: float, axis: Vector2, velocity: float, color: Color) -> void:

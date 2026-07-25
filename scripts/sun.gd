@@ -3,7 +3,6 @@ extends Node3D
 @export var radius := 120.0
 @export var surface_gravity := 0.2
 @export var death_radius := 180.0
-@export var initial_velocity := Vector3.ZERO
 
 var influence_radius := 2600.0
 var orbital_velocity := Vector3.ZERO
@@ -12,7 +11,6 @@ var orbital_velocity := Vector3.ZERO
 func _ready() -> void:
 	add_to_group("sun")
 	add_to_group("celestial_body")
-	orbital_velocity = initial_velocity
 	var mesh := MeshInstance3D.new()
 	var sphere := SphereMesh.new()
 	sphere.radius = radius

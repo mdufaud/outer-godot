@@ -12,19 +12,20 @@ const OceanWaveATexture := preload("res://assets/ocean_textures/wave_a.png")
 const OceanWaveBTexture := preload("res://assets/ocean_textures/wave_b.png")
 const OceanFoamTexture := preload("res://assets/ocean_textures/water_foam.png")
 const BlueNoiseTexture := preload("res://assets/planet_textures/blue_noise.png")
-const MESH_CACHE_VERSION := 3
+const MESH_CACHE_VERSION := 8
 
 static var _topology_cache: Dictionary = {}
 static var _topology_mutex := Mutex.new()
 
-@export_enum("earth", "moon", "alien", "shattered", "moat", "fiery_twin", "icey_twin", "cyclops", "tumbling_bean", "watchful_eye", "asteroid", "glacier") var body_kind := "earth"
+@export_enum("earth", "moon", "alien", "mirage", "shattered", "moat", "fiery_twin", "icey_twin", "cyclops", "tumbling_bean", "watchful_eye", "asteroid", "glacier") var body_kind := "earth"
 @export_enum("terrain", "lava", "ice") var surface_style := "terrain"
 @export var radius := 46.0
 @export var core_radius := 0.0
 @export var surface_gravity := 12.0
 @export var influence_scale := 30.0
 @export var rng_seed := 1337
-@export var initial_velocity := Vector3.ZERO
+# Tangential vertex jitter as a fraction of the radius; 0 keeps a clean sphere.
+@export var perturb_strength := 0.0
 @export var quality_profile := "desktop_high"
 @export var has_ocean := true
 @export var ocean_level := 0.0
@@ -81,7 +82,6 @@ var _collider_peak_radius := 0.0
 func _ready() -> void:
 	add_to_group("celestial_body")
 	collision_layer = 2
-	orbital_velocity = initial_velocity
 	influence_radius = radius * influence_scale
 	_height_generator = PlanetHeightGeneratorScript.new(body_kind, rng_seed)
 	_build_terrain()
@@ -318,6 +318,22 @@ func _poll_boot() -> void:
 		"heights_wait":
 			if _height_generator.has_result():
 				job.factors = _height_generator.take_result()
+				if perturb_strength > 0.0:
+					job.phase = "perturb"
+				else:
+					job.phase = "shading" if job.kind == "lod" else "build"
+		"perturb":
+			var directions: PackedVector3Array = _topology_for(int(job.resolution)).directions
+			var factors: PackedFloat32Array = job.factors
+			var points := PackedVector3Array()
+			points.resize(directions.size())
+			for index in directions.size():
+				points[index] = directions[index] * factors[index]
+			if _height_generator.request_perturb(points, perturb_strength):
+				job.phase = "perturb_wait"
+		"perturb_wait":
+			if _height_generator.has_perturb_result():
+				job.perturbed = _height_generator.take_perturb_result()
 				job.phase = "shading" if job.kind == "lod" else "build"
 		"shading":
 			if _height_generator.request_shading(_topology_for(int(job.resolution)).directions):
@@ -344,7 +360,7 @@ func _run_build_job(job: Dictionary) -> void:
 	if job.kind == "collision":
 		var mesh: ArrayMesh = job.get("mesh")
 		if mesh == null:
-			mesh = _build_mesh_from_factors(int(job.resolution), job.factors, PackedFloat32Array())
+			mesh = _build_mesh_from_factors(int(job.resolution), job.factors, PackedFloat32Array(), job.get("perturbed", PackedVector3Array()))
 			_save_cached_mesh(mesh, "collision", int(job.resolution))
 			job.mesh = mesh
 			_collision_mesh = mesh
@@ -367,7 +383,7 @@ func _run_build_job(job: Dictionary) -> void:
 			peak = maxf(peak, vertex.length())
 		job.peak = peak
 		return
-	var lod_mesh := _build_mesh_from_factors(int(job.resolution), job.factors, job.shading)
+	var lod_mesh := _build_mesh_from_factors(int(job.resolution), job.factors, job.shading, job.get("perturbed", PackedVector3Array()))
 	_save_cached_mesh(lod_mesh, "terrain", int(job.resolution))
 	job.mesh = lod_mesh
 
@@ -678,13 +694,17 @@ func _save_cached_mesh(mesh: ArrayMesh, purpose: String, resolution: int) -> voi
 
 
 func _mesh_cache_path(purpose: String, resolution: int) -> String:
-	return "user://planet_mesh_cache/v%d_%s_%s_%d_%d_%d.res" % [
+	var suffix := ""
+	if perturb_strength > 0.0:
+		suffix = "_p%d" % int(round(perturb_strength * 1000.0))
+	return "user://planet_mesh_cache/v%d_%s_%s_%d_%d_%d%s.res" % [
 		MESH_CACHE_VERSION,
 		purpose,
 		body_kind,
 		rng_seed,
 		int(round(_core_radius() * 1000.0)),
 		resolution,
+		suffix,
 	]
 
 
@@ -693,15 +713,20 @@ func _restore_terrain_properties(mesh: ArrayMesh) -> void:
 	_set_terrain_properties(float(mesh.get_meta("average_biome", 0.0)))
 
 
-func _build_mesh_from_factors(resolution: int, factors: PackedFloat32Array, shading_data: PackedFloat32Array) -> ArrayMesh:
+func _build_mesh_from_factors(resolution: int, factors: PackedFloat32Array, shading_data: PackedFloat32Array, perturbed := PackedVector3Array()) -> ArrayMesh:
 	var topology := _topology_for(resolution)
 	var directions: PackedVector3Array = topology.directions
 	assert(factors.size() == directions.size())
 	assert(shading_data.is_empty() or shading_data.size() == directions.size() * 4)
+	assert(perturbed.is_empty() or perturbed.size() == directions.size())
 	var shaped_vertices := PackedVector3Array()
 	shaped_vertices.resize(directions.size())
-	for index in directions.size():
-		shaped_vertices[index] = directions[index] * (_core_radius() * factors[index])
+	if perturbed.is_empty():
+		for index in directions.size():
+			shaped_vertices[index] = directions[index] * (_core_radius() * factors[index])
+	else:
+		for index in directions.size():
+			shaped_vertices[index] = perturbed[index] * _core_radius()
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = shaped_vertices
@@ -710,12 +735,9 @@ func _build_mesh_from_factors(resolution: int, factors: PackedFloat32Array, shad
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	if shading_data.is_empty():
 		return mesh
-	var tool := SurfaceTool.new()
-	tool.create_from(mesh, 0)
-	tool.generate_normals()
-	var shaded_mesh := tool.commit()
-	var shaded_arrays := shaded_mesh.surface_get_arrays(0)
-	var normals: PackedVector3Array = shaded_arrays[Mesh.ARRAY_NORMAL]
+	# SurfaceTool.generate_normals() welds and reorders vertices, which would
+	# desynchronise the per-direction shading data assigned below.
+	var normals := _compute_normals(shaped_vertices, topology.indices)
 	var tangents := PackedFloat32Array()
 	tangents.resize(normals.size() * 4)
 	var terrain_uv := PackedVector2Array()
@@ -738,17 +760,39 @@ func _build_mesh_from_factors(resolution: int, factors: PackedFloat32Array, shad
 		tangents[offset + 3] = 1.0
 	var final_arrays := []
 	final_arrays.resize(Mesh.ARRAY_MAX)
-	final_arrays[Mesh.ARRAY_VERTEX] = shaded_arrays[Mesh.ARRAY_VERTEX]
+	final_arrays[Mesh.ARRAY_VERTEX] = shaped_vertices
 	final_arrays[Mesh.ARRAY_NORMAL] = normals
 	final_arrays[Mesh.ARRAY_TANGENT] = tangents
 	final_arrays[Mesh.ARRAY_TEX_UV] = terrain_uv
 	final_arrays[Mesh.ARRAY_TEX_UV2] = terrain_uv2
-	final_arrays[Mesh.ARRAY_INDEX] = shaded_arrays[Mesh.ARRAY_INDEX]
+	final_arrays[Mesh.ARRAY_INDEX] = topology.indices
 	var final_mesh := ArrayMesh.new()
 	final_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, final_arrays)
 	final_mesh.set_meta("height_minmax", Vector2(minimum_factor, maximum_factor))
 	final_mesh.set_meta("average_biome", biome_sum / maxf(float(directions.size()), 1.0))
 	return final_mesh
+
+
+static func _compute_normals(vertices: PackedVector3Array, indices: PackedInt32Array) -> PackedVector3Array:
+	var normals := PackedVector3Array()
+	normals.resize(vertices.size())
+	for index in range(0, indices.size(), 3):
+		var first := indices[index]
+		var second := indices[index + 1]
+		var third := indices[index + 2]
+		var face := (vertices[second] - vertices[first]).cross(vertices[third] - vertices[first])
+		normals[first] += face
+		normals[second] += face
+		normals[third] += face
+	for index in normals.size():
+		var normal := normals[index]
+		if normal.length_squared() < 0.0000000001:
+			normal = vertices[index]
+		normal = normal.normalized()
+		if normal.dot(vertices[index]) < 0.0:
+			normal = -normal
+		normals[index] = normal
+	return normals
 
 
 static func _topology_for(resolution: int) -> Dictionary:
@@ -898,7 +942,38 @@ func _set_terrain_properties(average_biome: float) -> void:
 	_surface_material.set_shader_parameter("moon_biome_warp_strength", 6.08)
 	_surface_material.set_shader_parameter("moon_random_biome_values", Vector4(-4.41, 0.0, -1.18, 5.65))
 	_apply_reference_palette()
+	_apply_ice_caps()
+	_apply_fresnel()
 	_surface_material.set_shader_parameter("moon_average_biome_noise", average_biome)
+
+
+func _apply_ice_caps() -> void:
+	var strength := 0.0
+	if not _is_moon_profile() and body_kind not in ["alien", "cyclops", "mirage"]:
+		strength = 1.0
+	_surface_material.set_shader_parameter("ice_cap_strength", strength)
+	_surface_material.set_shader_parameter("ice_cap_color", Color.WHITE)
+	_surface_material.set_shader_parameter("ice_cap_start", 0.94)
+	_surface_material.set_shader_parameter("ice_cap_blend", 0.03)
+	_surface_material.set_shader_parameter("ice_cap_noise_a", 3.0)
+	_surface_material.set_shader_parameter("ice_cap_noise_b", 2.87)
+	_surface_material.set_shader_parameter("ice_cap_highlight", 1.2)
+	_surface_material.set_shader_parameter("ice_cap_specular", 0.704)
+	_surface_material.set_shader_parameter("earth_noise_scale", 10.0)
+	_surface_material.set_shader_parameter("earth_noise_scale_detail", 50.0)
+
+
+func _apply_fresnel() -> void:
+	var color := Color(1.0, 0.90105057, 0.6650944)
+	var near_strength := 0.0
+	var far_strength := 0.0
+	if _is_moon_profile():
+		near_strength = 1.0
+		far_strength = 9.2
+	_surface_material.set_shader_parameter("fresnel_color", color)
+	_surface_material.set_shader_parameter("fresnel_strength_near", near_strength)
+	_surface_material.set_shader_parameter("fresnel_strength_far", far_strength)
+	_surface_material.set_shader_parameter("fresnel_power", 12.0)
 
 
 func _apply_reference_palette() -> void:
@@ -912,6 +987,15 @@ func _apply_reference_palette() -> void:
 			_surface_material.set_shader_parameter("flat_high_b", Color(0.110119045, 0.0, 0.2264151))
 			_surface_material.set_shader_parameter("steep_low", Color(0.50084054, 0.19624422, 0.8490566))
 			_surface_material.set_shader_parameter("steep_high", Color.WHITE)
+		"mirage":
+			_surface_material.set_shader_parameter("shore_low", Color(0.93, 0.82, 0.6))
+			_surface_material.set_shader_parameter("shore_high", Color(0.85, 0.68, 0.44))
+			_surface_material.set_shader_parameter("flat_low_a", Color(0.82, 0.6, 0.34))
+			_surface_material.set_shader_parameter("flat_high_a", Color(0.6, 0.32, 0.14))
+			_surface_material.set_shader_parameter("flat_low_b", Color(0.74, 0.5, 0.28))
+			_surface_material.set_shader_parameter("flat_high_b", Color(0.46, 0.22, 0.1))
+			_surface_material.set_shader_parameter("steep_low", Color(0.42, 0.26, 0.16))
+			_surface_material.set_shader_parameter("steep_high", Color(0.2, 0.1, 0.06))
 		"tumbling_bean":
 			_surface_material.set_shader_parameter("moon_primary_a", Color(0.15864186, 0.18783918, 0.21698111))
 			_surface_material.set_shader_parameter("moon_secondary_a", Color(0.38274297, 0.4439998, 0.5754717))
@@ -924,8 +1008,8 @@ func _apply_reference_palette() -> void:
 			_surface_material.set_shader_parameter("moon_primary_b", Color(0.055, 0.075, 0.085))
 			_surface_material.set_shader_parameter("moon_secondary_b", Color(0.42, 0.64, 0.70))
 			_surface_material.set_shader_parameter("moon_ejecta", Color(0.88, 0.97, 1.0))
-			_surface_material.set_shader_parameter("moon_biome_blend_strength", 0.82)
-			_surface_material.set_shader_parameter("moon_biome_warp_strength", 9.5)
+			_surface_material.set_shader_parameter("moon_biome_blend_strength", 0.5)
+			_surface_material.set_shader_parameter("moon_biome_warp_strength", 5.0)
 			_surface_material.set_shader_parameter("moon_random_biome_values", Vector4(-2.1, 0.35, -2.8, 4.2))
 
 

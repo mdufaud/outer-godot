@@ -31,6 +31,9 @@ uniform float moon_biome_blend_strength = 1.37;
 uniform float moon_biome_warp_strength = 6.08;
 uniform vec4 moon_random_biome_values = vec4(-4.41, 0.0, -1.18, 5.65);
 uniform float moon_average_biome_noise = 1.0;
+uniform float moon_smoothness_a = 0.018220196;
+uniform float moon_smoothness_b = 0.18875508;
+uniform float moon_smoothness_ejecta = 0.037;
 uniform vec3 asteroid_col_flat : source_color = vec3(0.38, 0.35, 0.32);
 uniform vec3 asteroid_col_flat_deep : source_color = vec3(0.19, 0.17, 0.16);
 uniform vec3 asteroid_col_steep : source_color = vec3(0.28, 0.26, 0.25);
@@ -48,6 +51,23 @@ uniform float glacier_height_min = 20.0;
 uniform float glacier_height_max = 29.0;
 uniform float glacier_height_bands = 9.0;
 uniform vec3 cyclops_core_color : source_color = vec3(0.08, 1.0, 0.72);
+
+uniform float earth_noise_scale = 10.0;
+uniform float earth_noise_scale_detail = 50.0;
+
+uniform float ice_cap_strength = 0.0;
+uniform vec3 ice_cap_color : source_color = vec3(1.0, 1.0, 1.0);
+uniform float ice_cap_start = 0.94;
+uniform float ice_cap_blend = 0.03;
+uniform float ice_cap_noise_a = 3.0;
+uniform float ice_cap_noise_b = 2.87;
+uniform float ice_cap_highlight = 1.2;
+uniform float ice_cap_specular = 0.704;
+
+uniform vec3 fresnel_color : source_color = vec3(1.0, 0.9, 0.665);
+uniform float fresnel_strength_near = 0.0;
+uniform float fresnel_strength_far = 0.0;
+uniform float fresnel_power = 12.0;
 
 varying vec4 terrain_data;
 varying vec3 terrain_vertex;
@@ -151,7 +171,8 @@ void fragment() {
 		ROUGHNESS = 0.78;
 		SPECULAR = 0.18;
 	} else if (body_kind == 0) {
-		vec4 source_noise = triplanar(terrain_vertex / planet_radius, mesh_normal, 10.0, earth_noise);
+		vec4 source_noise = triplanar(terrain_vertex / planet_radius, mesh_normal, earth_noise_scale, earth_noise);
+		vec4 detail_noise = triplanar(terrain_vertex / planet_radius, mesh_normal, earth_noise_scale_detail, earth_noise);
 		steepness = remap01(steepness, 0.0, 0.65);
 		float shore_height = mix(height_min_max.x, 1.0, ocean_level);
 		float above_shore_height01 = remap01(terrain_height, shore_height, height_min_max.y);
@@ -173,20 +194,29 @@ void fragment() {
 		banding = float(int(banding * 9.0)) / 8.0;
 		banding = (abs(banding - 0.5) * 2.0 - 0.5) * 0.5;
 		vec3 steep_terrain_col = mix(steep_low.rgb, steep_high.rgb, above_shore_height01 + banding);
-		float flat_blend_noise = (source_noise.r - 0.5) * 0.026;
+		float flat_blend_noise = (detail_noise.r - 0.5) * 0.026;
 		float flat_strength = 1.0 - blend(0.378 + flat_blend_noise, 0.051, steepness);
 		float flat_height_falloff = 1.0 - blend(0.52 + flat_blend_noise, 0.051, above_shore_height01);
 		ALBEDO = mix(steep_terrain_col, flat_terrain_col, flat_strength * flat_height_falloff);
 		ROUGHNESS = 1.0;
 		SPECULAR = 0.0;
+		if (ice_cap_strength > 0.0) {
+			float snow_line_noise = terrain_data.y * ice_cap_noise_a * 0.01 + (source_noise.b - 0.5) * ice_cap_noise_b * 0.01;
+			float cap_weight = blend(ice_cap_start, ice_cap_blend, abs(terrain_vertex.y / planet_radius + snow_line_noise)) * ice_cap_strength;
+			float speckle = 1.0 - detail_noise.g * 0.05;
+			vec3 snow_col = ice_cap_color * mix(1.0, ice_cap_highlight, above_shore_height01 + banding) * speckle;
+			ALBEDO = mix(ALBEDO, snow_col, cap_weight);
+			ROUGHNESS = mix(ROUGHNESS, 1.0 - ice_cap_specular, cap_weight);
+			SPECULAR = mix(SPECULAR, 0.5, cap_weight);
+		}
 	} else {
 		vec4 source_noise = triplanar(terrain_vertex / planet_radius, mesh_normal, 8.0, moon_noise);
 		steepness = remap01(steepness, 0.0, 0.3);
 		float warp_noise = blend(0.0, 3.0, terrain_data.z);
 		float height_noise_a = -source_noise.g * steepness - (source_noise.b - 0.5) * 0.7 + (source_noise.a - 0.5) * moon_random_biome_values.x;
 		float height_noise_b = (source_noise.g - 0.5) * moon_random_biome_values.y + (source_noise.r - 0.5) * moon_random_biome_values.z;
-		float height_blend_weight_a = blend(0.5, 0.1, height01 + height_noise_a) * warp_noise;
-		float height_blend_weight_b = blend(0.5, 0.1, height01 + height_noise_b) * warp_noise;
+		float height_blend_weight_a = blend(0.5, 0.6, height01 + height_noise_a) * warp_noise;
+		float height_blend_weight_b = blend(0.5, 0.6, height01 + height_noise_b) * warp_noise;
 		vec3 col_biome_a = mix(moon_primary_a.rgb, moon_secondary_a.rgb, height_blend_weight_a);
 		vec3 col_biome_b = mix(moon_primary_b.rgb, moon_secondary_b.rgb, height_blend_weight_b);
 		float biome_noise = dot(source_noise.ga - 0.5, moon_random_biome_values.zw) * 4.0;
@@ -194,8 +224,14 @@ void fragment() {
 		vec2 crater_uv = 0.5 + vec2(cos(terrain_data.x), sin(terrain_data.x)) * terrain_data.y;
 		float ejecta = texture(crater_ejecta, crater_uv).r;
 		float crater_alpha = float(abs(terrain_data.y) < 0.5);
-		ALBEDO = mix(mix(col_biome_a, col_biome_b, biome_weight), moon_ejecta.rgb, clamp(ejecta * 1.5, 0.0, 1.0) * crater_alpha);
-		ROUGHNESS = 1.0 - mix(0.018220196, 0.18875508, biome_weight);
+		float ejecta_weight = clamp(ejecta * 1.5, 0.0, 1.0) * crater_alpha;
+		ALBEDO = mix(mix(col_biome_a, col_biome_b, biome_weight), moon_ejecta.rgb, ejecta_weight);
+		float smoothness = mix(moon_smoothness_a, moon_smoothness_b, biome_weight);
+		smoothness = mix(smoothness, moon_smoothness_ejecta, ejecta_weight);
+		ROUGHNESS = 1.0 - smoothness;
+		// Unity's MetallicA of 0.811 relies on reflection probes; without them a
+		// metallic moon just renders black here.
+		METALLIC = 0.0;
 		SPECULAR = 0.0;
 		vec3 normal_flat = object_to_tangent(triplanar_normal(terrain_vertex / planet_radius, mesh_normal, 20.0, moon_normal_flat), mesh_normal, terrain_tangent);
 		vec3 normal_steep = object_to_tangent(triplanar_normal(terrain_vertex / planet_radius, mesh_normal, 20.0, moon_normal_steep), mesh_normal, terrain_tangent);
@@ -204,5 +240,13 @@ void fragment() {
 		vec3 terrain_normal_map = mix(flat_and_steep_normal, normal_steep, steepness);
 		terrain_normal_map = mix(vec3(0.0, 0.0, 1.0), terrain_normal_map, 0.589);
 		NORMAL_MAP = terrain_normal_map * 0.5 + 0.5;
+	}
+
+	if (fresnel_strength_near > 0.0 || fresnel_strength_far > 0.0) {
+		float radii_from_surface = length(VERTEX) / max(planet_radius, 0.00001) - 1.0;
+		float fresnel_t = smoothstep(0.0, 1.0, radii_from_surface);
+		float fresnel_strength = mix(fresnel_strength_near, fresnel_strength_far, fresnel_t);
+		float rim = clamp(fresnel_strength * pow(1.0 - dot(normalize(VIEW), normalize(NORMAL)), fresnel_power), 0.0, 1.0);
+		ALBEDO = mix(ALBEDO, fresnel_color, rim);
 	}
 }

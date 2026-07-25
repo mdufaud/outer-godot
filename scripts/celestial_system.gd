@@ -3,20 +3,32 @@ extends Node
 const ORBIT_PARENTS := {
 	"Terra": "Sun",
 	"Luna": "Terra",
+	"Twins": "Sun",
 	"Cyclops": "Sun",
 	"Tumbling Bean": "Cyclops",
 	"Watchful Eye": "Cyclops",
+	"Mirage": "Sun",
 }
-const TWIN_VARIATION := 0.025
+const TWIN_NAMES := ["Fiery Twin", "Icey Twin"]
+const TWIN_ENTRY := "Twins"
 const FAST_FORWARD_MULTIPLIER := 60.0
+const MAX_SUBSTEP := 1.0 / 120.0
+const MIN_SEPARATION := 0.01
+# Bodies weigh several percent of the sun, so undamped cross-pulls wreck the
+# system within hours. Hierarchy pairs keep their full pull, the rest is damped.
+const PERTURBATION_SCALE := 0.1
 
 var bodies: Array = []
-var _bodies_by_name := {}
-var _orbits := {}
-var _twin_orbit := {}
-var _elapsed := 0.0
-var _sun_start := Vector3.ZERO
-var _sun_velocity := Vector3.ZERO
+var _positions := PackedFloat64Array()
+var _velocities := PackedFloat64Array()
+var _pair_mu: Array[PackedFloat64Array] = []
+# Simulated entry index per body, so the twin pair can share a single entry.
+var _entry_of_body: Array[int] = []
+var _twin_bodies: Array[Node3D] = []
+var _twin_entry := -1
+var _twin_offsets: Array[Vector3] = []
+var _twin_angular_speed := 0.0
+var _twin_angle := 0.0
 var _time_multiplier := 1.0
 
 
@@ -24,27 +36,45 @@ func _ready() -> void:
 	add_to_group("celestial_system")
 	add_to_group("origin_shift_listener")
 	process_physics_priority = -100
+	var names: Array[String] = []
+	var mu: Array[float] = []
+	var positions: Array[Vector3] = []
 	for body in get_tree().get_nodes_in_group("celestial_body"):
 		bodies.append(body)
-		_bodies_by_name[String(body.name)] = body
-	_initialize_orbits()
+		var body_name := String(body.name)
+		var body_mu := float(body.call("get_gravitational_parameter"))
+		if body_name in TWIN_NAMES:
+			_twin_bodies.append(body)
+			_entry_of_body.append(-1)
+			continue
+		_entry_of_body.append(names.size())
+		names.append(body_name)
+		positions.append(body.global_position)
+		mu.append(body_mu)
+	_setup_twin_entry(names, positions, mu)
+	_positions = pack_state(positions)
+	_velocities = pack_state(compute_initial_velocities(names, positions, mu))
+	_pair_mu = build_pair_mu(names, mu)
+	_publish_states()
 
 
 func _physics_process(delta: float) -> void:
-	if _bodies_by_name.size() < 2:
+	if _pair_mu.size() < 2:
 		return
-	_elapsed += delta * _time_multiplier
-	_update_sun()
-	_update_circular_orbit("Terra")
-	_update_circular_orbit("Luna")
-	_update_twins()
-	_update_circular_orbit("Cyclops")
-	_update_circular_orbit("Tumbling Bean")
-	_update_circular_orbit("Watchful Eye")
+	var scaled_delta := delta * _time_multiplier
+	var steps := maxi(1, int(ceil(scaled_delta / MAX_SUBSTEP)))
+	var step := scaled_delta / float(steps)
+	for i in steps:
+		step_simulation(_positions, _velocities, _pair_mu, step)
+	_twin_angle = fposmod(_twin_angle + _twin_angular_speed * scaled_delta, TAU)
+	_publish_states()
 
 
 func apply_origin_shift(offset: Vector3) -> void:
-	_sun_start += offset
+	for index in range(0, _positions.size(), 3):
+		_positions[index] += offset.x
+		_positions[index + 1] += offset.y
+		_positions[index + 2] += offset.z
 
 
 func set_fast_forward_enabled(enabled: bool) -> void:
@@ -55,101 +85,158 @@ func is_fast_forward_enabled() -> bool:
 	return _time_multiplier != 1.0
 
 
-func _initialize_orbits() -> void:
-	var sun: Node3D = _bodies_by_name.get("Sun")
-	if sun == null:
+# The twins sit at roughly half their mutual Hill radius: an integrated binary
+# gets torn apart by the sun within hours, so only their barycenter is
+# simulated and the pair spins around it at the two-body circular rate.
+func _setup_twin_entry(names: Array[String], positions: Array[Vector3], mu: Array[float]) -> void:
+	if _twin_bodies.size() != 2:
 		return
-	_sun_start = sun.global_position
-	_sun_velocity = sun.get("orbital_velocity")
-	for body_name in ORBIT_PARENTS:
-		var body: Node3D = _bodies_by_name.get(body_name)
-		var parent: Node3D = _bodies_by_name.get(ORBIT_PARENTS[body_name])
-		if body == null or parent == null:
+	var first_mu: float = _twin_bodies[0].call("get_gravitational_parameter")
+	var second_mu: float = _twin_bodies[1].call("get_gravitational_parameter")
+	var total_mu := first_mu + second_mu
+	var first_position: Vector3 = _twin_bodies[0].global_position
+	var second_position: Vector3 = _twin_bodies[1].global_position
+	var barycenter := (first_position * first_mu + second_position * second_mu) / total_mu
+	var separation := first_position.distance_to(second_position)
+	_twin_entry = names.size()
+	names.append(TWIN_ENTRY)
+	positions.append(barycenter)
+	mu.append(total_mu)
+	_twin_offsets = [first_position - barycenter, second_position - barycenter]
+	_twin_angular_speed = sqrt(total_mu / (separation * separation * separation))
+	for index in bodies.size():
+		if bodies[index] in _twin_bodies:
+			_entry_of_body[index] = _twin_entry
+
+
+func _publish_states() -> void:
+	for index in bodies.size():
+		var entry := _entry_of_body[index]
+		if entry == _twin_entry and _twin_entry != -1:
 			continue
-		var offset := body.global_position - parent.global_position
-		var relative_velocity: Vector3 = body.get("orbital_velocity") - parent.get("orbital_velocity")
-		_orbits[body_name] = {
-			"offset": offset,
-			"angular_speed": offset.cross(relative_velocity).y / maxf(offset.length_squared(), 0.01),
-		}
-	_initialize_twins(sun)
-
-
-func _initialize_twins(sun: Node3D) -> void:
-	var fiery: Node3D = _bodies_by_name.get("Fiery Twin")
-	var icey: Node3D = _bodies_by_name.get("Icey Twin")
-	if fiery == null or icey == null:
+		bodies[index].set_orbital_state(
+			read_state(_positions, entry), read_state(_velocities, entry) * _time_multiplier
+		)
+	if _twin_entry == -1:
 		return
-	var fiery_mu := float(fiery.call("get_gravitational_parameter"))
-	var icey_mu := float(icey.call("get_gravitational_parameter"))
-	var total_mu := fiery_mu + icey_mu
-	var barycenter := (fiery.global_position * fiery_mu + icey.global_position * icey_mu) / total_mu
-	var barycenter_velocity: Vector3 = (
-		fiery.get("orbital_velocity") * fiery_mu + icey.get("orbital_velocity") * icey_mu
-	) / total_mu
-	var solar_offset := barycenter - sun.global_position
-	var solar_relative_velocity: Vector3 = barycenter_velocity - sun.get("orbital_velocity")
-	var relative_offset := fiery.global_position - icey.global_position
-	var relative_velocity: Vector3 = fiery.get("orbital_velocity") - icey.get("orbital_velocity")
-	_twin_orbit = {
-		"solar_offset": solar_offset,
-		"solar_angular_speed": solar_offset.cross(solar_relative_velocity).y / maxf(solar_offset.length_squared(), 0.01),
-		"fiery_offset": fiery.global_position - barycenter,
-		"icey_offset": icey.global_position - barycenter,
-		"binary_angular_speed": relative_offset.cross(relative_velocity).y / maxf(relative_offset.length_squared(), 0.01),
-	}
+	var barycenter := read_state(_positions, _twin_entry)
+	var barycenter_velocity := read_state(_velocities, _twin_entry)
+	for twin in _twin_bodies.size():
+		var offset: Vector3 = _twin_offsets[twin].rotated(Vector3.UP, _twin_angle)
+		var spin := Vector3.UP.cross(offset) * _twin_angular_speed
+		_twin_bodies[twin].set_orbital_state(
+			barycenter + offset, (barycenter_velocity + spin) * _time_multiplier
+		)
 
 
-func _update_sun() -> void:
-	var sun: Node3D = _bodies_by_name.get("Sun")
-	if sun != null:
-		sun.set_orbital_state(_sun_start + _sun_velocity * _elapsed, _sun_velocity * _time_multiplier)
+# Semi-implicit Euler over the full body set: every body pulls every other one,
+# so orbits are elliptical and moons drift instead of following fixed circles.
+# State is packed float64 xyz triplets: Vector3 is float32, and at 11 km from
+# the origin its rounding turns into metres of orbital drift over a long session.
+# pair_mu[i][j] is the gravitational parameter body j shows to body i.
+static func step_simulation(positions: PackedFloat64Array, velocities: PackedFloat64Array, pair_mu: Array[PackedFloat64Array], delta: float) -> void:
+	var count := pair_mu.size()
+	for i in count:
+		var base := i * 3
+		var x := positions[base]
+		var y := positions[base + 1]
+		var z := positions[base + 2]
+		var acceleration_x := 0.0
+		var acceleration_y := 0.0
+		var acceleration_z := 0.0
+		var row: PackedFloat64Array = pair_mu[i]
+		for j in count:
+			if i == j:
+				continue
+			var other := j * 3
+			var dx := positions[other] - x
+			var dy := positions[other + 1] - y
+			var dz := positions[other + 2] - z
+			var distance := sqrt(dx * dx + dy * dy + dz * dz)
+			if distance < MIN_SEPARATION:
+				continue
+			var pull: float = row[j] / (distance * distance * distance)
+			acceleration_x += dx * pull
+			acceleration_y += dy * pull
+			acceleration_z += dz * pull
+		velocities[base] += acceleration_x * delta
+		velocities[base + 1] += acceleration_y * delta
+		velocities[base + 2] += acceleration_z * delta
+	for i in positions.size():
+		positions[i] += velocities[i] * delta
 
 
-func _update_circular_orbit(body_name: String) -> void:
-	if not _orbits.has(body_name):
-		return
-	var body: Node3D = _bodies_by_name[body_name]
-	var parent: Node3D = _bodies_by_name[ORBIT_PARENTS[body_name]]
-	var orbit: Dictionary = _orbits[body_name]
-	var angular_speed: float = orbit.angular_speed
-	var angle := fposmod(angular_speed * _elapsed, TAU)
-	var offset: Vector3 = orbit.offset.rotated(Vector3.UP, angle)
-	var velocity: Vector3 = parent.get("orbital_velocity") + Vector3.UP.cross(offset) * angular_speed * _time_multiplier
-	body.set_orbital_state(parent.global_position + offset, velocity)
+static func pack_state(values: Array[Vector3]) -> PackedFloat64Array:
+	var packed := PackedFloat64Array()
+	packed.resize(values.size() * 3)
+	for i in values.size():
+		packed[i * 3] = values[i].x
+		packed[i * 3 + 1] = values[i].y
+		packed[i * 3 + 2] = values[i].z
+	return packed
 
 
-func _update_twins() -> void:
-	if _twin_orbit.is_empty():
-		return
-	var sun: Node3D = _bodies_by_name["Sun"]
-	var solar_speed: float = _twin_orbit.solar_angular_speed
-	var solar_angle := fposmod(solar_speed * _elapsed, TAU)
-	var barycenter_offset: Vector3 = _twin_orbit.solar_offset.rotated(Vector3.UP, solar_angle)
-	var barycenter_position := sun.global_position + barycenter_offset
-	var barycenter_velocity: Vector3 = sun.get("orbital_velocity") + Vector3.UP.cross(barycenter_offset) * solar_speed * _time_multiplier
-	var binary_speed: float = _twin_orbit.binary_angular_speed
-	var binary_angle := fposmod(binary_speed * _elapsed, TAU)
-	var scale := 1.0 - TWIN_VARIATION + TWIN_VARIATION * cos(binary_angle)
-	var scale_velocity := -TWIN_VARIATION * sin(binary_angle) * binary_speed
-	_update_twin("Fiery Twin", _twin_orbit.fiery_offset, binary_angle, scale, scale_velocity, binary_speed, barycenter_position, barycenter_velocity)
-	_update_twin("Icey Twin", _twin_orbit.icey_offset, binary_angle, scale, scale_velocity, binary_speed, barycenter_position, barycenter_velocity)
+static func read_state(packed: PackedFloat64Array, index: int) -> Vector3:
+	var base := index * 3
+	return Vector3(packed[base], packed[base + 1], packed[base + 2])
 
 
-func _update_twin(
-	body_name: String,
-	initial_offset: Vector3,
-	angle: float,
-	scale: float,
-	scale_velocity: float,
-	angular_speed: float,
-	barycenter_position: Vector3,
-	barycenter_velocity: Vector3
-) -> void:
-	var body: Node3D = _bodies_by_name[body_name]
-	var rotated_offset := initial_offset.rotated(Vector3.UP, angle)
-	var offset := rotated_offset * scale
-	var velocity := barycenter_velocity + (
-		Vector3.UP.cross(rotated_offset) * angular_speed * scale + rotated_offset * scale_velocity
-	) * _time_multiplier
-	body.set_orbital_state(barycenter_position + offset, velocity)
+# A body feels its own ancestors at full strength and everything else damped.
+# The sun therefore has no full-strength puller and stays put: letting bodies
+# worth 5% of its mass drag it around fed an indirect perturbation back into
+# every orbit and ejected Terra within a few days of simulated time.
+static func build_pair_mu(names: Array[String], mu: Array[float]) -> Array[PackedFloat64Array]:
+	var pair_mu: Array[PackedFloat64Array] = []
+	for i in names.size():
+		var row := PackedFloat64Array()
+		row.resize(names.size())
+		var ancestors := _ancestors_of(names[i])
+		for j in names.size():
+			row[j] = mu[j] * (1.0 if names[j] in ancestors else PERTURBATION_SCALE)
+		pair_mu.append(row)
+	return pair_mu
+
+
+static func _ancestors_of(body_name: String) -> Array[String]:
+	var ancestors: Array[String] = []
+	var current := body_name
+	while ORBIT_PARENTS.has(current):
+		current = ORBIT_PARENTS[current]
+		ancestors.append(current)
+	return ancestors
+
+
+# The simulation only stays bounded if it starts from two-body circular states,
+# so velocities are derived from the hierarchy instead of being authored.
+static func compute_initial_velocities(names: Array[String], positions: Array[Vector3], mu: Array[float]) -> Array[Vector3]:
+	var index_of := {}
+	for i in names.size():
+		index_of[names[i]] = i
+	var velocities: Array[Vector3] = []
+	velocities.resize(names.size())
+	velocities.fill(Vector3.ZERO)
+
+	for body_name in ORBIT_PARENTS:
+		if not index_of.has(body_name):
+			continue
+		var chain: Array[String] = [body_name]
+		var parent_name: String = ORBIT_PARENTS[body_name]
+		while ORBIT_PARENTS.has(parent_name):
+			chain.push_front(parent_name)
+			parent_name = ORBIT_PARENTS[parent_name]
+		for link in chain:
+			var i: int = index_of[link]
+			var parent: int = index_of[ORBIT_PARENTS[link]]
+			velocities[i] = velocities[parent] + _circular_velocity(
+				positions[i] - positions[parent], mu[parent]
+			)
+
+	return velocities
+
+
+static func _circular_velocity(offset: Vector3, parent_mu: float) -> Vector3:
+	var distance := offset.length()
+	if distance < MIN_SEPARATION:
+		return Vector3.ZERO
+	var direction := Vector3.UP.cross(offset).normalized()
+	return direction * sqrt(parent_mu / distance)
