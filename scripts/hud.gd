@@ -35,6 +35,7 @@ var _dropdown_open := false
 var _selected_planet_name := ""
 var locked_body: Node3D
 var aimed_body: Node3D
+var ui_scale := 1.0
 
 const HINT_FOOT := "WASD walk/jetpack · Space/Shift ascend/descend · X brake · E interact · Tab markers · R respawn"
 const HINT_SHIP := "WASD thrust · Space/Shift up/down · Mouse steer · LMB lock · Z/C roll · X brake · Tab markers · E exit"
@@ -58,6 +59,7 @@ const GRAVITY_COLORS := [
 
 func _ready() -> void:
 	add_to_group("hud")
+	ui_scale = Touch.ui_scale(get_viewport().get_visible_rect().size)
 	tracked_ship = get_parent().get("ship")
 	for body in get_tree().get_nodes_in_group("celestial_body"):
 		if body is Node3D:
@@ -67,21 +69,21 @@ func _ready() -> void:
 	var crosshair := Label.new()
 	crosshair.text = "+"
 	crosshair.set_anchors_preset(Control.PRESET_CENTER)
-	crosshair.add_theme_font_size_override("font_size", 22)
+	crosshair.add_theme_font_size_override("font_size", _px(22))
 	add_child(crosshair)
 
 	prompt_label = Label.new()
 	prompt_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	prompt_label.position.y -= 120
-	prompt_label.add_theme_font_size_override("font_size", 20)
+	prompt_label.position.y -= 120.0 * ui_scale
+	prompt_label.add_theme_font_size_override("font_size", _px(20))
 	prompt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	prompt_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	add_child(prompt_label)
 
 	info_label = Label.new()
 	info_label.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	info_label.position = Vector2(16, 16)
-	info_label.add_theme_font_size_override("font_size", 18)
+	info_label.position = Vector2(16, 16) * ui_scale
+	info_label.add_theme_font_size_override("font_size", _px(18))
 	add_child(info_label)
 
 	hint_label = Label.new()
@@ -92,11 +94,16 @@ func _ready() -> void:
 	hint_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	hint_label.modulate = Color(1, 1, 1, 0.5)
 	hint_label.text = HINT_FOOT
+	hint_label.visible = not Touch.is_touch_ui()
 	add_child(hint_label)
 	_build_teleport_menu()
 	_build_gravity_debug_panel()
-	get_viewport().size_changed.connect(_layout_teleport_menu)
-	_layout_teleport_menu.call_deferred()
+	get_viewport().size_changed.connect(layout_panels)
+	layout_panels.call_deferred()
+
+
+func _px(value: float) -> int:
+	return int(roundf(value * ui_scale))
 
 
 func _build_navigation_overlay() -> void:
@@ -120,23 +127,23 @@ func _build_teleport_menu() -> void:
 	teleport_panel.z_index = 10
 	teleport_panel.add_theme_stylebox_override("panel", _panel_style())
 	var content := VBoxContainer.new()
-	content.add_theme_constant_override("separation", 6)
+	content.add_theme_constant_override("separation", _px(6))
 	var title := Label.new()
 	title.text = "PLANET NAVIGATION"
-	title.add_theme_font_size_override("font_size", 11)
+	title.add_theme_font_size_override("font_size", _px(11))
 	title.add_theme_color_override("font_color", Color(0.62, 0.78, 0.95))
 	content.add_child(title)
 	var label := Label.new()
 	label.text = "Teleport to planet"
-	label.add_theme_font_size_override("font_size", 14)
+	label.add_theme_font_size_override("font_size", _px(14))
 	content.add_child(label)
 	teleport_menu = Button.new()
 	teleport_menu.name = "PlanetTeleportMenu"
 	teleport_menu.text = "Choose planet"
-	teleport_menu.custom_minimum_size = Vector2(0.0, 40.0)
+	teleport_menu.custom_minimum_size = Vector2(0.0, 40.0 * ui_scale)
 	teleport_menu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	teleport_menu.focus_mode = Control.FOCUS_NONE
-	teleport_menu.add_theme_font_size_override("font_size", 14)
+	teleport_menu.add_theme_font_size_override("font_size", _px(14))
 	_apply_button_theme(teleport_menu, UI_ACCENT_COLOR)
 	_make_ui_button(teleport_menu)
 	teleport_menu.pressed.connect(_toggle_planet_dropdown)
@@ -156,7 +163,7 @@ func _build_teleport_menu() -> void:
 	var list := VBoxContainer.new()
 	list.name = "PlanetList"
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	list.add_theme_constant_override("separation", 5)
+	list.add_theme_constant_override("separation", _px(5))
 	planet_buttons.clear()
 	for body in celestial_bodies:
 		if not body.has_method("get_surface_radius_towards"):
@@ -164,11 +171,11 @@ func _build_teleport_menu() -> void:
 		var planet_button := Button.new()
 		planet_button.name = "%sButton" % body.name.replace(" ", "")
 		planet_button.text = body.name
-		planet_button.custom_minimum_size = Vector2(0.0, 42.0)
+		planet_button.custom_minimum_size = Vector2(0.0, 42.0 * ui_scale)
 		planet_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		planet_button.toggle_mode = true
 		planet_button.focus_mode = Control.FOCUS_NONE
-		planet_button.add_theme_font_size_override("font_size", 14)
+		planet_button.add_theme_font_size_override("font_size", _px(14))
 		_apply_button_theme(planet_button, Color(0.45, 0.72, 1.0))
 		_make_ui_button(planet_button)
 		planet_button.pressed.connect(_on_planet_selected.bind(StringName(body.name)))
@@ -186,23 +193,23 @@ func _build_gravity_debug_panel() -> void:
 	panel.mouse_filter = Control.MOUSE_FILTER_PASS
 	panel.add_theme_stylebox_override("panel", _panel_style())
 	var content := VBoxContainer.new()
-	content.add_theme_constant_override("separation", 7)
+	content.add_theme_constant_override("separation", _px(7))
 	var title := Label.new()
 	title.text = "DEBUG TOOLS"
-	title.add_theme_font_size_override("font_size", 11)
+	title.add_theme_font_size_override("font_size", _px(11))
 	title.add_theme_color_override("font_color", Color(0.62, 0.78, 0.95))
 	content.add_child(title)
 	var buttons := GridContainer.new()
 	buttons.columns = 2
-	buttons.add_theme_constant_override("h_separation", 6)
-	buttons.add_theme_constant_override("v_separation", 5)
+	buttons.add_theme_constant_override("h_separation", _px(6))
+	buttons.add_theme_constant_override("v_separation", _px(5))
 	gravity_button = Button.new()
 	gravity_button.name = "GravityDebugToggle"
 	gravity_button.text = "Gravity: OFF"
 	gravity_button.toggle_mode = true
-	gravity_button.custom_minimum_size = Vector2(0.0, 38.0)
+	gravity_button.custom_minimum_size = Vector2(0.0, 38.0 * ui_scale)
 	gravity_button.focus_mode = Control.FOCUS_NONE
-	gravity_button.add_theme_font_size_override("font_size", 13)
+	gravity_button.add_theme_font_size_override("font_size", _px(13))
 	_apply_button_theme(gravity_button, Color(1.0, 0.50, 0.36))
 	_make_ui_button(gravity_button)
 	gravity_button.toggled.connect(_on_gravity_debug_toggled)
@@ -211,9 +218,9 @@ func _build_gravity_debug_panel() -> void:
 	orbit_button.name = "OrbitFastForwardToggle"
 	orbit_button.text = "Fast time: OFF"
 	orbit_button.toggle_mode = true
-	orbit_button.custom_minimum_size = Vector2(0.0, 38.0)
+	orbit_button.custom_minimum_size = Vector2(0.0, 38.0 * ui_scale)
 	orbit_button.focus_mode = Control.FOCUS_NONE
-	orbit_button.add_theme_font_size_override("font_size", 13)
+	orbit_button.add_theme_font_size_override("font_size", _px(13))
 	_apply_button_theme(orbit_button, Color(0.55, 0.78, 1.0))
 	_make_ui_button(orbit_button)
 	orbit_button.toggled.connect(_on_orbit_fast_forward_toggled)
@@ -238,7 +245,7 @@ func _on_orbit_fast_forward_toggled(enabled: bool) -> void:
 		celestial_system.set_fast_forward_enabled(enabled)
 
 
-func _layout_teleport_menu() -> void:
+func layout_panels() -> void:
 	if teleport_root == null:
 		return
 	teleport_root.position = Vector2.ZERO
@@ -246,36 +253,47 @@ func _layout_teleport_menu() -> void:
 	if navigation_overlay != null:
 		navigation_overlay.size = teleport_root.size
 	var viewport_size := teleport_root.size
-	var width := clampf(viewport_size.x * 0.22, 236.0, 286.0)
-	width = minf(width, maxf(216.0, viewport_size.x - 32.0))
+	var margin := 16.0 * ui_scale
+	var width := clampf(viewport_size.x * 0.22, 236.0 * ui_scale, 286.0 * ui_scale)
+	width = minf(width, maxf(216.0, viewport_size.x - margin * 2.0))
 	teleport_panel.anchor_left = 1.0
 	teleport_panel.anchor_right = 1.0
 	teleport_panel.anchor_top = 0.0
 	teleport_panel.anchor_bottom = 0.0
-	teleport_panel.offset_left = -width - 16.0
-	teleport_panel.offset_top = 16.0
-	teleport_panel.offset_right = -16.0
-	teleport_panel.offset_bottom = 88.0
-	var debug_top := 108.0
+	teleport_panel.offset_left = -width - margin
+	teleport_panel.offset_top = margin
+	teleport_panel.offset_right = -margin
+	teleport_panel.offset_bottom = margin + teleport_panel.get_combined_minimum_size().y
+	var debug_top := teleport_panel.offset_bottom + 12.0 * ui_scale
 	var debug_panel := teleport_root.get_node_or_null("GravityDebugPanel") as PanelContainer
 	if debug_panel != null:
 		debug_panel.anchor_left = 1.0
 		debug_panel.anchor_right = 1.0
 		debug_panel.anchor_top = 0.0
 		debug_panel.anchor_bottom = 0.0
-		debug_panel.offset_left = -width - 16.0
+		debug_panel.offset_left = -width - margin
 		debug_panel.offset_top = debug_top
-		debug_panel.offset_right = -16.0
-		debug_panel.offset_bottom = debug_top + 98.0
+		debug_panel.offset_right = -margin
+		debug_panel.offset_bottom = debug_top + debug_panel.get_combined_minimum_size().y
 	if teleport_dropdown != null:
 		teleport_dropdown.anchor_left = 1.0
 		teleport_dropdown.anchor_right = 1.0
 		teleport_dropdown.anchor_top = 0.0
 		teleport_dropdown.anchor_bottom = 0.0
-		teleport_dropdown.offset_left = -width - 16.0
+		teleport_dropdown.offset_left = -width - margin
 		teleport_dropdown.offset_top = debug_top
-		teleport_dropdown.offset_right = -16.0
-		teleport_dropdown.offset_bottom = teleport_dropdown.offset_top + minf(370.0, maxf(176.0, viewport_size.y * 0.52))
+		teleport_dropdown.offset_right = -margin
+		var wanted := minf(370.0 * ui_scale, maxf(176.0 * ui_scale, viewport_size.y * 0.52))
+		teleport_dropdown.offset_bottom = minf(teleport_dropdown.offset_top + wanted, _panel_bottom_limit(viewport_size, margin))
+
+
+# Keep panels from growing under the on-screen touch controls.
+func _panel_bottom_limit(viewport_size: Vector2, margin: float) -> float:
+	var limit := viewport_size.y - margin
+	var touch_hud := get_tree().get_first_node_in_group("touch_hud")
+	if touch_hud != null and touch_hud.has_method("controls_top"):
+		limit = minf(limit, touch_hud.controls_top() - margin)
+	return limit
 
 
 func _input(event: InputEvent) -> void:
@@ -396,12 +414,13 @@ func _draw_marker(canvas: Control, camera: Camera3D, world_position: Vector3, ma
 	var local_position := camera.to_local(world_position)
 	var distance := camera_position.distance_to(world_position)
 	var screen_position: Vector2
+	var margin := MARKER_MARGIN * ui_scale
 	var offscreen := camera.is_position_behind(world_position)
 	if not offscreen:
 		screen_position = camera.unproject_position(world_position)
 		offscreen = (
-			screen_position.x < MARKER_MARGIN or screen_position.x > viewport_size.x - MARKER_MARGIN
-			or screen_position.y < MARKER_MARGIN or screen_position.y > viewport_size.y - MARKER_MARGIN
+			screen_position.x < margin or screen_position.x > viewport_size.x - margin
+			or screen_position.y < margin or screen_position.y > viewport_size.y - margin
 		)
 	if offscreen:
 		var direction := Vector2(local_position.x, -local_position.y)
@@ -412,17 +431,18 @@ func _draw_marker(canvas: Control, camera: Camera3D, world_position: Vector3, ma
 		screen_position = _clamp_to_screen(viewport_size * 0.5, direction.normalized(), viewport_size)
 		_draw_chevron(canvas, screen_position, direction.normalized(), color)
 	else:
-		canvas.draw_arc(screen_position, 7.0, 0.0, TAU, 16, color, 1.4, true)
-		canvas.draw_circle(screen_position, 1.8, color)
+		canvas.draw_arc(screen_position, 7.0 * ui_scale, 0.0, TAU, 16, color, 1.4 * ui_scale, true)
+		canvas.draw_circle(screen_position, 1.8 * ui_scale, color)
 	var label := "%s  %s" % [marker_name, _format_distance(distance)]
-	var label_position := screen_position + Vector2(11.0, -8.0)
-	if label_position.x + label.length() * 7.0 > viewport_size.x - 8.0:
-		label_position.x = screen_position.x - label.length() * 7.0 - 11.0
-	canvas.draw_string(ThemeDB.fallback_font, label_position, label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 13, color)
+	var label_width := label.length() * 7.0 * ui_scale
+	var label_position := screen_position + Vector2(11.0, -8.0) * ui_scale
+	if label_position.x + label_width > viewport_size.x - 8.0 * ui_scale:
+		label_position.x = screen_position.x - label_width - 11.0 * ui_scale
+	canvas.draw_string(ThemeDB.fallback_font, label_position, label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, _px(13), color)
 
 
 func _clamp_to_screen(center: Vector2, direction: Vector2, viewport_size: Vector2) -> Vector2:
-	var limits := viewport_size * 0.5 - Vector2.ONE * MARKER_MARGIN
+	var limits := viewport_size * 0.5 - Vector2.ONE * MARKER_MARGIN * ui_scale
 	var scale := minf(
 		limits.x / maxf(absf(direction.x), 0.001),
 		limits.y / maxf(absf(direction.y), 0.001)
@@ -432,9 +452,9 @@ func _clamp_to_screen(center: Vector2, direction: Vector2, viewport_size: Vector
 
 func _draw_chevron(canvas: Control, position_value: Vector2, direction: Vector2, color: Color) -> void:
 	var side := direction.rotated(PI * 0.5)
-	var tip := position_value + direction * 7.0
-	var tail := position_value - direction * 6.0
-	canvas.draw_polyline(PackedVector2Array([tail + side * 5.0, tip, tail - side * 5.0]), color, 1.5, true)
+	var tip := position_value + direction * 7.0 * ui_scale
+	var tail := position_value - direction * 6.0 * ui_scale
+	canvas.draw_polyline(PackedVector2Array([tail + side * 5.0 * ui_scale, tip, tail - side * 5.0 * ui_scale]), color, 1.5 * ui_scale, true)
 
 
 func _draw_gravity_debug(canvas: Control, camera: Camera3D) -> void:
@@ -456,13 +476,13 @@ func _draw_gravity_debug(canvas: Control, camera: Camera3D) -> void:
 		if direction.length_squared() < 0.0001:
 			direction = Vector2.UP
 		direction = direction.normalized()
-		var length := clampf(42.0 + log(1.0 + acceleration.length()) * 20.0, 42.0, 105.0)
-		var start := origin + direction.rotated(PI * 0.5) * float(color_index - 1) * 8.0
+		var length := clampf(42.0 + log(1.0 + acceleration.length()) * 20.0, 42.0, 105.0) * ui_scale
+		var start := origin + direction.rotated(PI * 0.5) * float(color_index - 1) * 8.0 * ui_scale
 		var end := start + direction * length
-		canvas.draw_line(start, end, color, 2.0, true)
+		canvas.draw_line(start, end, color, 2.0 * ui_scale, true)
 		_draw_chevron(canvas, end, direction, color)
 		var text := "%s  %.3f m/s²" % [body.name, acceleration.length()]
-		canvas.draw_string(ThemeDB.fallback_font, end + Vector2(9.0, -7.0), text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 12, color)
+		canvas.draw_string(ThemeDB.fallback_font, end + Vector2(9.0, -7.0) * ui_scale, text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, _px(12), color)
 
 
 func _draw_target(canvas: Control, camera: Camera3D, body: Node3D, locked: bool) -> void:
@@ -471,9 +491,9 @@ func _draw_target(canvas: Control, camera: Camera3D, body: Node3D, locked: bool)
 	var center := camera.unproject_position(body.global_position)
 	var radius := float(body.get("radius"))
 	var edge := camera.unproject_position(body.global_position + camera.global_basis.x * radius)
-	var ring_radius := clampf(center.distance_to(edge) * (1.12 if locked else 1.06), 13.0, 260.0)
+	var ring_radius := clampf(center.distance_to(edge) * (1.12 if locked else 1.06), 13.0 * ui_scale, 260.0 * ui_scale)
 	var color := TARGET_COLOR if locked else AIM_COLOR
-	canvas.draw_arc(center, ring_radius, 0.0, TAU, 48, color, 2.2 if locked else 1.2, true)
+	canvas.draw_arc(center, ring_radius, 0.0, TAU, 48, color, (2.2 if locked else 1.2) * ui_scale, true)
 	if ship == null:
 		return
 	var direction := (body.global_position - camera.global_position).normalized()
@@ -484,7 +504,7 @@ func _draw_target(canvas: Control, camera: Camera3D, body: Node3D, locked: bool)
 	var relative := relative_velocity_components(ship.linear_velocity, body.get("orbital_velocity"), direction, camera.global_basis.y, camera.global_basis.x)
 	var target_state := "LOCKED" if locked else "TARGET"
 	var label := "%s  %s\nSurface %s\nApproach %+.1f m/s" % [body.name, target_state, _format_distance(surface_distance), relative.z]
-	canvas.draw_multiline_string(ThemeDB.fallback_font, center + Vector2(ring_radius + 12.0, -8.0), label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 14, -1, color)
+	canvas.draw_multiline_string(ThemeDB.fallback_font, center + Vector2(ring_radius + 12.0 * ui_scale, -8.0 * ui_scale), label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, _px(14), -1, color)
 	_draw_velocity_indicator(canvas, center, ring_radius, Vector2.RIGHT, relative.x, color)
 	_draw_velocity_indicator(canvas, center, ring_radius, Vector2.UP, relative.y, color)
 
@@ -494,9 +514,9 @@ func _draw_velocity_indicator(canvas: Control, center: Vector2, ring_radius: flo
 		return
 	var direction := axis * signf(velocity)
 	var start := center + direction * ring_radius
-	var length := clampf(absf(velocity) * 0.75, 10.0, 170.0)
+	var length := clampf(absf(velocity) * 0.75, 10.0, 170.0) * ui_scale
 	var end := start + direction * length
-	canvas.draw_line(start, end, color, 2.4, true)
+	canvas.draw_line(start, end, color, 2.4 * ui_scale, true)
 	_draw_chevron(canvas, end, direction, color)
 
 
@@ -563,12 +583,12 @@ func _panel_style() -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = UI_PANEL_COLOR
 	style.border_color = UI_BORDER_COLOR
-	style.set_border_width_all(1)
-	style.set_corner_radius_all(12)
-	style.content_margin_left = 12.0
-	style.content_margin_top = 10.0
-	style.content_margin_right = 12.0
-	style.content_margin_bottom = 10.0
+	style.set_border_width_all(_px(1))
+	style.set_corner_radius_all(_px(12))
+	style.content_margin_left = 12.0 * ui_scale
+	style.content_margin_top = 10.0 * ui_scale
+	style.content_margin_right = 12.0 * ui_scale
+	style.content_margin_bottom = 10.0 * ui_scale
 	return style
 
 
@@ -596,10 +616,10 @@ func _button_style(fill: Color, border: Color, border_alpha: float) -> StyleBoxF
 	var style := StyleBoxFlat.new()
 	style.bg_color = fill
 	style.border_color = Color(border, border_alpha)
-	style.set_border_width_all(1)
-	style.set_corner_radius_all(9)
-	style.content_margin_left = 10.0
-	style.content_margin_top = 7.0
-	style.content_margin_right = 10.0
-	style.content_margin_bottom = 7.0
+	style.set_border_width_all(_px(1))
+	style.set_corner_radius_all(_px(9))
+	style.content_margin_left = 10.0 * ui_scale
+	style.content_margin_top = 7.0 * ui_scale
+	style.content_margin_right = 10.0 * ui_scale
+	style.content_margin_bottom = 7.0 * ui_scale
 	return style

@@ -84,6 +84,11 @@ func _boot() -> void:
 		_dread_pulse.name = "WatchfulEyeDread"
 		_dread_pulse.target = spawned_bodies["Watchful Eye"]
 		add_child(_dread_pulse)
+		var comet_trail := preload("res://scripts/comet_trail.gd").new()
+		comet_trail.name = "WatchfulEyeTrail"
+		comet_trail.target = spawned_bodies["Watchful Eye"]
+		comet_trail.sun = sun
+		add_child(comet_trail)
 	_log_boot("Waiting for %d bodies" % spawned_bodies.size())
 	if not await _wait_for_bodies(spawned_bodies.values()):
 		return
