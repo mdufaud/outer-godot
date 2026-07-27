@@ -470,10 +470,12 @@ func get_ocean_effect_radius() -> float:
 
 
 func get_ocean_effect_params() -> PackedFloat32Array:
+	_refresh_effect_transform_params()
 	return _ocean_params
 
 
 func get_atmosphere_effect_params() -> PackedFloat32Array:
+	_refresh_effect_transform_params()
 	return _atmosphere_params
 
 
@@ -656,6 +658,13 @@ func _update_lighting() -> void:
 	var direction := (sun.global_position - global_position).normalized()
 	if surface_style == "terrain":
 		_surface_material.set_shader_parameter("sun_direction", direction)
+
+
+func _refresh_effect_transform_params() -> void:
+	var direction := Vector3.UP
+	var sun := get_tree().get_first_node_in_group("sun") as Node3D
+	if sun != null:
+		direction = (sun.global_position - global_position).normalized()
 	if not _ocean_params.is_empty():
 		_ocean_params[0] = global_position.x
 		_ocean_params[1] = global_position.y

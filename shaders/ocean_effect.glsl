@@ -70,12 +70,12 @@ vec3 blend_rnm(vec3 first, vec3 second) {
 	return first * dot(first, second) / max(first.z, 0.0001) - second;
 }
 
-vec3 triplanar_normal(vec3 position, vec3 surface_normal, float scale, vec2 offset, sampler2D normal_map) {
+vec3 triplanar_normal(vec3 position, vec3 surface_normal, float scale, vec2 offset, float lod, sampler2D normal_map) {
 	vec3 weights = pow(abs(surface_normal), vec3(4.0));
 	weights /= max(dot(weights, vec3(1.0)), 0.0001);
-	vec3 normal_x = unpack_normal(texture(normal_map, position.zy * scale + offset).rgb);
-	vec3 normal_y = unpack_normal(texture(normal_map, position.xz * scale + offset).rgb);
-	vec3 normal_z = unpack_normal(texture(normal_map, position.xy * scale + offset).rgb);
+	vec3 normal_x = unpack_normal(textureLod(normal_map, position.zy * scale + offset, lod).rgb);
+	vec3 normal_y = unpack_normal(textureLod(normal_map, position.xz * scale + offset, lod).rgb);
+	vec3 normal_z = unpack_normal(textureLod(normal_map, position.xy * scale + offset, lod).rgb);
 	normal_x = blend_rnm(vec3(surface_normal.zy, abs(surface_normal.x)), normal_x);
 	normal_y = blend_rnm(vec3(surface_normal.xz, abs(surface_normal.y)), normal_y);
 	normal_z = blend_rnm(vec3(surface_normal.xy, abs(surface_normal.z)), normal_z);
@@ -85,13 +85,25 @@ vec3 triplanar_normal(vec3 position, vec3 surface_normal, float scale, vec2 offs
 	return normalize(normal_x.zyx * weights.x + normal_y.xzy * weights.y + normal_z.xyz * weights.z);
 }
 
-float triplanar_foam(vec3 position, vec3 normal, float scale, vec2 offset) {
+float triplanar_foam(vec3 position, vec3 normal, float scale, vec2 offset, float lod) {
 	vec3 weights = normal * normal;
 	weights /= max(dot(weights, vec3(1.0)), 0.0001);
-	float x = texture(foam_texture, position.zy * scale + offset).r;
-	float y = texture(foam_texture, position.xz * scale + offset).g;
-	float z = texture(foam_texture, position.xy * scale + offset).b;
+	float x = textureLod(foam_texture, position.zy * scale + offset, lod).r;
+	float y = textureLod(foam_texture, position.xz * scale + offset, lod).g;
+	float z = textureLod(foam_texture, position.xy * scale + offset, lod).b;
 	return dot(vec3(x, y, z), weights);
+}
+
+vec3 ray_direction_at(vec2 screen_uv, vec3 camera_position) {
+	vec2 ndc = screen_uv * 2.0 - 1.0;
+	vec4 near_point = params.inverse_view_projection * vec4(ndc, 1.0, 1.0);
+	return normalize(near_point.xyz / near_point.w - camera_position);
+}
+
+float texture_lod(float world_footprint, float coordinate_scale, sampler2D sampled_texture) {
+	float texel_footprint = world_footprint * coordinate_scale * float(textureSize(sampled_texture, 0).x) * 2.0;
+	float maximum_lod = float(max(textureQueryLevels(sampled_texture) - 1, 0));
+	return clamp(log2(max(texel_footprint, 1.0)), 0.0, maximum_lod);
 }
 
 void main() {
@@ -144,6 +156,14 @@ void main() {
 	// side of the planet, past the terminator, and blacks out the sea bed.
 	float surface_distance = hit.x;
 	vec3 intersection = camera_position + ray_direction * surface_distance - planet_centre;
+	vec2 pixel_size = 1.0 / vec2(size);
+	vec3 ray_direction_x = ray_direction_at(screen_uv + vec2(pixel_size.x, 0.0), camera_position);
+	vec3 ray_direction_y = ray_direction_at(screen_uv + vec2(0.0, pixel_size.y), camera_position);
+	vec2 hit_x = ray_sphere(planet_centre, ocean_radius, camera_position, ray_direction_x);
+	vec2 hit_y = ray_sphere(planet_centre, ocean_radius, camera_position, ray_direction_y);
+	vec3 intersection_x = camera_position + ray_direction_x * hit_x.x - planet_centre;
+	vec3 intersection_y = camera_position + ray_direction_y * hit_y.x - planet_centre;
+	float world_footprint = max(length(intersection_x - intersection), length(intersection_y - intersection));
 	// Reference: SebLague dstAboveWater — measured at the near plane, so it is a
 	// per-pixel test. A camera-wide bool flips the whole screen at once and makes
 	// the image slam when the waterline sits mid-screen.
@@ -154,9 +174,12 @@ void main() {
 	float wave_time = time * wave_speed * 0.05;
 	vec2 offset_a = vec2(wave_time, wave_time * 0.8);
 	vec2 offset_b = vec2(wave_time * -0.8, wave_time * -0.3);
-	vec3 normal_a = triplanar_normal(intersection, sphere_normal, normal_scale, offset_a, wave_normal_a);
-	vec3 detail_normal = triplanar_normal(intersection, normal_a, normal_scale, offset_b, wave_normal_b);
+	float normal_lod = texture_lod(world_footprint, normal_scale, wave_normal_a);
+	vec3 normal_a = triplanar_normal(intersection, sphere_normal, normal_scale, offset_a, normal_lod, wave_normal_a);
+	vec3 detail_normal = triplanar_normal(intersection, normal_a, normal_scale, offset_b, normal_lod, wave_normal_b);
 	vec3 wave_normal = normalize(mix(sphere_normal, detail_normal, clamp(wave_strength, 0.0, 1.0)));
+	float specular_wave_strength = clamp(wave_strength * exp2(-4.0 * normal_lod), 0.0, 1.0);
+	vec3 specular_normal = normalize(mix(sphere_normal, detail_normal, specular_wave_strength));
 	float depth_blend = 1.0 - exp(-ocean_depth / max(planet_scale, 0.00001) * depth_multiplier);
 	float alpha = 1.0 - exp(-ocean_depth / max(planet_scale, 0.00001) * alpha_multiplier);
 	vec3 ocean_colour = mix(shallow_colour, deep_colour, depth_blend);
@@ -164,12 +187,13 @@ void main() {
 	float wrapped_light = clamp(dot(wave_normal, normalize(sun_direction)) * 0.35 + 0.65, 0.0, 1.0);
 	float cloud_diffusion = 0.72 + 0.28 * sin(dot(sphere_normal, vec3(9.1, 13.7, 7.3)) + time * 0.18);
 	vec3 scattered_sky = ambient_colour * ambient_strength * mix(wrapped_light, cloud_diffusion, sky_diffusion);
-	float specular_angle = acos(clamp(dot(normalize(normalize(sun_direction) - ray_direction), wave_normal), -1.0, 1.0));
+	float specular_angle = acos(clamp(dot(normalize(normalize(sun_direction) - ray_direction), specular_normal), -1.0, 1.0));
 	float specular_exponent = specular_angle / max(1.0 - smoothness, 0.0001);
 	float specular_highlight = exp(-specular_exponent * specular_exponent) * above_water;
 	vec3 lit_ocean = ocean_colour * diffuse_lighting + scattered_sky + specular_colour * specular_highlight;
 	float shore = 1.0 - smoothstep(0.0, max(foam_distance, 0.001), ocean_depth);
-	float foam_noise = triplanar_foam(intersection / max(planet_scale, 0.00001), sphere_normal, foam_scale, offset_a * 0.35);
+	float foam_lod = texture_lod(world_footprint, foam_scale / max(planet_scale, 0.00001), foam_texture);
+	float foam_noise = triplanar_foam(intersection / max(planet_scale, 0.00001), sphere_normal, foam_scale, offset_a * 0.35, foam_lod);
 	float leading_edge = smoothstep(0.02, 0.35, ocean_depth / max(foam_distance, 0.001));
 	float foam = shore * leading_edge * smoothstep(0.24, 0.78, 1.0 - foam_noise) * above_water;
 	lit_ocean = mix(lit_ocean, foam_colour * (0.65 + 0.35 * diffuse_lighting), foam);
