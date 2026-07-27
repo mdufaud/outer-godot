@@ -37,7 +37,7 @@ var locked_body: Node3D
 var aimed_body: Node3D
 var ui_scale := 1.0
 
-const HINT_FOOT := "WASD walk/jetpack · Space/Shift ascend/descend · X brake · E interact · Tab markers · R respawn"
+const HINT_FOOT := "WASD walk · Space jump/jetpack in air · Shift sprint/descend · X brake · E interact · Tab markers · R respawn"
 const HINT_SHIP := "WASD thrust · Space/Shift up/down · Mouse steer · LMB lock · Z/C roll · X brake · Tab markers · E exit"
 const MARKER_MARGIN := 42.0
 const SHIP_COLOR := Color(0.35, 0.85, 1.0, 0.9)

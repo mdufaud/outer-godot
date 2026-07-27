@@ -79,6 +79,7 @@ func apply_origin_shift(offset: Vector3) -> void:
 
 func set_fast_forward_enabled(enabled: bool) -> void:
 	_time_multiplier = FAST_FORWARD_MULTIPLIER if enabled else 1.0
+	get_tree().call_group("fast_time_affected", "set_fast_time_enabled", enabled)
 
 
 func is_fast_forward_enabled() -> bool:
@@ -182,14 +183,15 @@ static func read_state(packed: PackedFloat64Array, index: int) -> Vector3:
 
 
 # A body feels its own ancestors at full strength and everything else damped.
-# The sun therefore has no full-strength puller and stays put: letting bodies
-# worth 5% of its mass drag it around fed an indirect perturbation back into
-# every orbit and ejected Terra within a few days of simulated time.
+# The sun defines the fixed simulation frame and therefore feels no pull.
 static func build_pair_mu(names: Array[String], mu: Array[float]) -> Array[PackedFloat64Array]:
 	var pair_mu: Array[PackedFloat64Array] = []
 	for i in names.size():
 		var row := PackedFloat64Array()
 		row.resize(names.size())
+		if names[i] == "Sun":
+			pair_mu.append(row)
+			continue
 		var ancestors := _ancestors_of(names[i])
 		for j in names.size():
 			row[j] = mu[j] * (1.0 if names[j] in ancestors else PERTURBATION_SCALE)

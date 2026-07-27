@@ -25,6 +25,9 @@ var _crater_cells: Dictionary = {}
 var _crater_cell_size := 0.0
 var _settings_bytes := PackedByteArray()
 var _crater_bytes := PackedByteArray()
+var _spikes: Array[Dictionary] = []
+var _spike_count := 0
+var _spike_bytes := PackedByteArray()
 var _shading_settings: Array[Vector4] = []
 var _moon_points: Array[Vector4] = []
 var _ejecta_craters: Array[Vector4] = []
@@ -45,6 +48,7 @@ var _shader := RID()
 var _pipeline := RID()
 var _settings_buffer := RID()
 var _crater_buffer := RID()
+var _spike_buffer := RID()
 var _positions_buffer := RID()
 var _heights_buffer := RID()
 var _uniform_set := RID()
@@ -208,6 +212,10 @@ func _initialize_render() -> void:
 	if crater_data.is_empty():
 		crater_data.resize(32)
 	_crater_buffer = _rd.storage_buffer_create(crater_data.size(), crater_data)
+	var spike_data := _spike_bytes
+	if spike_data.is_empty():
+		spike_data.resize(32)
+	_spike_buffer = _rd.storage_buffer_create(spike_data.size(), spike_data)
 	var shading_pipeline := _shared_pipeline(SHADING_SHADER_PATH)
 	if shading_pipeline.has("error"):
 		_state.error = shading_pipeline.error
@@ -278,8 +286,9 @@ func _generate_render(positions: PackedByteArray, count: int) -> void:
 		_buffer_uniform(_heights_buffer, 1),
 		_buffer_uniform(_crater_buffer, 2),
 		_buffer_uniform(_settings_buffer, 3),
+		_buffer_uniform(_spike_buffer, 4),
 	], _shader, 0)
-	var constants := PackedInt32Array([count, _body_kind, _craters.size(), 0]).to_byte_array()
+	var constants := PackedInt32Array([count, _body_kind, _craters.size(), _spike_count]).to_byte_array()
 	var command_list := _rd.compute_list_begin()
 	_rd.compute_list_bind_compute_pipeline(command_list, _pipeline)
 	_rd.compute_list_bind_uniform_set(command_list, _uniform_set, 0)
@@ -349,9 +358,10 @@ func _free_render() -> void:
 	_release_request_resources()
 	_release_shading_request_resources()
 	_release_perturb_request_resources()
-	for resource in [_ejecta_craters_buffer, _moon_points_buffer, _shading_settings_buffer, _crater_buffer, _settings_buffer]:
+	for resource in [_ejecta_craters_buffer, _moon_points_buffer, _shading_settings_buffer, _spike_buffer, _crater_buffer, _settings_buffer]:
 		if resource.is_valid():
 			_rd.free_rid(resource)
+	_spike_buffer = RID()
 	_ejecta_craters_buffer = RID()
 	_moon_points_buffer = RID()
 	_shading_settings_buffer = RID()
@@ -524,8 +534,9 @@ func _build_shading_settings() -> void:
 			_set_shading_simple_noise(6, random, 5, 0.58, 2.7, 1.5, 1.4, 0.0)
 		else:
 			_set_shading_simple_noise(6, random, 4, 0.5, 2.34, 1.35, 1.43, 0.0)
-		_build_moon_points(18 if _profile == "watchful_eye" else 32, shading_seed)
-		_build_ejecta_craters(3 if _profile == "watchful_eye" else 2, 102 if _profile == "watchful_eye" else 0, 9.0 if _profile == "watchful_eye" else 11.0)
+		_build_moon_points(10 if _profile == "watchful_eye" else 32, shading_seed)
+		# Bright ejecta rays are the strongest "moon" cue, so the comet keeps one.
+		_build_ejecta_craters(1 if _profile == "watchful_eye" else 2, 102 if _profile == "watchful_eye" else 0, 9.0 if _profile == "watchful_eye" else 11.0)
 	_shading_settings_bytes = _pack_vector4_array(_shading_settings)
 	_moon_points_bytes = _pack_vector4_array(_moon_points)
 	_ejecta_craters_bytes = _pack_vector4_array(_ejecta_craters)
@@ -611,11 +622,14 @@ func _build_moon_settings(random: DotNetRandom) -> void:
 			_set_ridge_noise(16, random, 4, 0.5, 2.0, 15.0, 0.0, 2.0, 1.0, 0.0, 0.0)
 			_build_craters(3000, Vector2(0.012, 0.12), -0.16, 1.22, Vector2(0.4, 1.5), 0.742, 17801)
 		"watchful_eye":
-			# Kept smooth on purpose: high frequency relief buries the eye.
-			_set_simple_noise(10, random, 4, 0.54, 2.0, 0.58, 3.4, 0.0, Vector3(3.0, 14.7, 0.0))
-			_set_ridge_noise(13, random, 4, 0.48, 2.8, 2.4, 1.2, 2.4, 1.0, -0.8, 1.2)
-			_set_ridge_noise(16, random, 5, 0.46, 2.2, 8.5, 0.35, 2.8, 1.0, -0.25, 0.45)
-			_build_craters(40, Vector2(0.012, 0.1), 0.12, 0.72, Vector2(0.18, 0.75), 0.68, 17809, _eye_craters())
+			# An icy nucleus, not a moon: broad swells carry the silhouette while
+			# the high frequency relief stays low, so the eye reads from far away
+			# and the crust looks like sublimated ice rather than regolith.
+			_set_simple_noise(10, random, 4, 0.54, 2.0, 0.5, 4.6, 0.0, Vector3(3.0, 14.7, 0.0))
+			_set_ridge_noise(13, random, 4, 0.48, 2.8, 1.9, 0.62, 2.4, 1.0, -0.8, 1.2)
+			_set_ridge_noise(16, random, 5, 0.46, 2.2, 8.5, 0.12, 2.8, 1.0, -0.25, 0.45)
+			_build_craters(12, Vector2(0.012, 0.08), 0.1, 0.72, Vector2(0.3, 0.9), 0.72, 17809, _eye_craters())
+			_build_spikes(28, 18211)
 		_:
 			_set_simple_noise(10, random, 4, 0.5, 2.0, 0.97, 0.0, 0.0)
 			_set_ridge_noise(13, random, 4, 0.5, 5.0, 1.82, -2.84, 2.0, 0.5, 0.0, 3.0)
@@ -633,10 +647,75 @@ const EYE_DIRECTION := Vector3(0.0, 0.18, 1.0)
 func _eye_craters() -> Array[Dictionary]:
 	var centre := EYE_DIRECTION.normalized()
 	return [
-		{"centre": centre, "radius": 0.75, "floor": -0.3, "smoothness": 0.55, "forced": true},
-		{"centre": centre, "radius": 0.42, "floor": -0.22, "smoothness": 0.3, "forced": true},
-		{"centre": centre, "radius": 0.22, "floor": 0.9, "smoothness": 0.18, "forced": true},
+		{"centre": centre, "radius": 0.86, "floor": -0.07, "smoothness": 0.6, "forced": true},
+		{"centre": centre, "radius": 0.44, "floor": -0.05, "smoothness": 0.35, "forced": true},
+		{"centre": centre, "radius": 0.17, "floor": 0.55, "smoothness": 0.2, "forced": true},
 	]
+
+
+# Ice spires growing straight out of the crust. They are part of the heightfield
+# so the collider carries them too. They only grow on the hemisphere behind the
+# eye, and are spaced apart or the maximum in the shader fuses them into a blob.
+func _build_spikes(count: int, spike_seed: int) -> void:
+	var random := DotNetRandom.new(_seed + spike_seed)
+	var eye := EYE_DIRECTION.normalized()
+	var attempts := 0
+	while _spikes.size() < count and attempts < count * 80:
+		attempts += 1
+		var direction := _random_unit_direction(random)
+		if direction.dot(eye) > -0.18:
+			continue
+		var crowded := false
+		for placed in _spikes:
+			if (placed.direction as Vector3).dot(direction) > 0.975:
+				crowded = true
+				break
+		if crowded:
+			continue
+		# Sharpness is the power the alignment is raised to: the spire keeps half
+		# its height out to roughly sqrt(2 * ln2 / sharpness) radians. Tall spires
+		# are also the thin ones, so they read as needles and not as horns.
+		var scale := random.value()
+		_spikes.append({
+			"direction": direction,
+			"height": lerpf(0.45, 1.15, scale),
+			"sharpness": lerpf(300.0, 90.0, scale),
+			"taper": lerpf(0.35, 0.9, random.value()),
+		})
+	_spike_count = _spikes.size()
+	var values := PackedFloat32Array()
+	values.resize(maxi(_spike_count, 1) * 8)
+	for index in _spike_count:
+		var spike: Dictionary = _spikes[index]
+		var offset := index * 8
+		var direction: Vector3 = spike.direction
+		values[offset] = direction.x
+		values[offset + 1] = direction.y
+		values[offset + 2] = direction.z
+		values[offset + 3] = float(spike.height)
+		values[offset + 4] = float(spike.sharpness)
+		values[offset + 5] = float(spike.taper)
+	_spike_bytes = values.to_byte_array()
+
+
+func spike_height_span() -> float:
+	var span := 0.0
+	for spike in _spikes:
+		span = maxf(span, float(spike.height))
+	return span
+
+
+func _spike_height(position: Vector3) -> float:
+	if _spikes.is_empty():
+		return 0.0
+	var direction := position.normalized()
+	var height := 0.0
+	for spike in _spikes:
+		var alignment := maxf((spike.direction as Vector3).dot(direction), 0.0)
+		var needle := pow(alignment, float(spike.sharpness))
+		needle *= lerpf(1.0, needle, float(spike.taper))
+		height = maxf(height, float(spike.height) * needle)
+	return height
 
 
 func _build_craters(count: int, size_range: Vector2, rim_steepness: float, rim_width: float, smooth_range: Vector2, distribution: float, crater_seed: int, forced: Array[Dictionary] = []) -> void:
@@ -726,7 +805,7 @@ func _moon_factor(position: Vector3) -> float:
 	var shape := _simple_noise(position, 10)
 	var ridge := _smoothed_ridge_noise(position, 13)
 	var ridge2 := _smoothed_ridge_noise(position, 16)
-	return 1.0 + _crater_depth(position) + (shape + ridge + ridge2) * 0.01
+	return 1.0 + _crater_depth(position) + (shape + ridge + ridge2) * 0.01 + _spike_height(position)
 
 
 func _alien_factor(position: Vector3) -> float:

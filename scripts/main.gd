@@ -5,11 +5,11 @@ const SHIP_SCENE := preload("res://scenes/ship.tscn")
 const PLAYER_SCENE := preload("res://scenes/player.tscn")
 const SUN_SCENE := preload("res://scenes/sun.tscn")
 const HUD_SCENE := preload("res://scenes/hud.tscn")
-const UNDERWATER_SHADER := preload("res://shaders/underwater.gdshader")
 const CameraShakeScript := preload("res://scripts/camera_shake.gd")
 const BonificationMathScript := preload("res://scripts/bonification_math.gd")
 const SolarSystemContentScript := preload("res://scripts/solar_system_content.gd")
 const FloatingOriginScript := preload("res://scripts/floating_origin.gd")
+const PlanetEffectsScript := preload("res://scripts/planet_effects.gd")
 
 const SUN_RADIUS := 345.0
 const SUN_SURFACE_GRAVITY := 50.0
@@ -30,11 +30,10 @@ var _loading_layer: CanvasLayer
 var _loading_root: Control
 var _loading_label: Label
 var _loading_progress: ProgressBar
-var _underwater_root: Control
-var _underwater_tint: ColorRect
+var _feedback_root: Control
 var _underwater_strength := 0.0
-var _underwater_source: Node3D
 var _sky_material: ShaderMaterial
+var _planet_effects: CompositorEffect
 var _camera_shake: Node
 var _ocean_audio: AudioStreamPlayer
 var _wind_audio: AudioStreamPlayer
@@ -110,7 +109,7 @@ func _boot() -> void:
 	player = PLAYER_SCENE.instantiate()
 	add_child(player)
 	spawn_on_planet(earth)
-	_build_underwater_overlay()
+	_build_feedback_overlay()
 	_build_environment_feedback()
 
 	add_child(HUD_SCENE.instantiate())
@@ -135,31 +134,34 @@ func _process(delta: float) -> void:
 	var camera := get_viewport().get_camera_3d()
 	_update_lighting(camera)
 	_update_sky(camera)
-	_update_underwater_overlay(delta, camera)
+	_update_planet_effects(camera)
+	_update_underwater_state(delta, camera)
 	_update_environment_feedback(delta, camera)
 
 
-func _build_underwater_overlay() -> void:
+func _update_planet_effects(camera: Camera3D) -> void:
+	if _planet_effects == null:
+		return
+	if camera == null:
+		_planet_effects.clear()
+		return
+	_planet_effects.update_from_bodies(camera.global_position, get_tree().get_nodes_in_group("celestial_body"))
+
+
+func _build_feedback_overlay() -> void:
 	var layer := CanvasLayer.new()
 	layer.layer = 1
 	add_child(layer)
-	_underwater_root = Control.new()
-	_underwater_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_underwater_root.size = get_viewport().get_visible_rect().size
-	layer.add_child(_underwater_root)
-	_underwater_tint = ColorRect.new()
-	_underwater_tint.material = ShaderMaterial.new()
-	(_underwater_tint.material as ShaderMaterial).shader = UNDERWATER_SHADER
-	_underwater_tint.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_underwater_tint.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_underwater_tint.visible = false
-	_underwater_root.add_child(_underwater_tint)
-	get_viewport().size_changed.connect(_resize_underwater_overlay)
+	_feedback_root = Control.new()
+	_feedback_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_feedback_root.size = get_viewport().get_visible_rect().size
+	layer.add_child(_feedback_root)
+	get_viewport().size_changed.connect(_resize_feedback_overlay)
 
 
-func _resize_underwater_overlay() -> void:
-	if _underwater_root != null:
-		_underwater_root.size = get_viewport().get_visible_rect().size
+func _resize_feedback_overlay() -> void:
+	if _feedback_root != null:
+		_feedback_root.size = get_viewport().get_visible_rect().size
 
 
 func _build_environment_feedback() -> void:
@@ -173,7 +175,7 @@ func _build_environment_feedback() -> void:
 	_transition_tint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_transition_tint.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_transition_tint.visible = false
-	_underwater_root.add_child(_transition_tint)
+	_feedback_root.add_child(_transition_tint)
 	_ocean_audio = AudioStreamPlayer.new()
 	_ocean_audio.stream = preload("res://assets/audio/ocean_waves.wav")
 	_ocean_audio.volume_linear = 0.0
@@ -193,23 +195,15 @@ func _set_stream_loop(stream: AudioStream) -> void:
 		(stream as AudioStreamWAV).loop_mode = AudioStreamWAV.LOOP_FORWARD
 
 
-func _update_underwater_overlay(delta: float, camera: Camera3D) -> void:
-	if camera == null or _underwater_tint == null:
-		return
-	var source: Node3D = Gravity.get_nearest_surface(camera.global_position)
-	if source == null:
-		source = Gravity.get_strongest(camera.global_position)
-	var depth := float(source.get_water_depth(camera.global_position)) if source != null and source.has_method("get_water_depth") else -INF
-	var target_strength := underwater_effect_target(depth)
+func _update_underwater_state(delta: float, camera: Camera3D) -> void:
+	var target_strength := 0.0
+	if camera != null:
+		var source: Node3D = Gravity.get_nearest_surface(camera.global_position)
+		if source == null:
+			source = Gravity.get_strongest(camera.global_position)
+		if source != null and source.has_method("get_water_depth"):
+			target_strength = underwater_effect_target(float(source.get_water_depth(camera.global_position)))
 	_underwater_strength = move_toward(_underwater_strength, target_strength, delta * 2.8)
-	_underwater_source = source if target_strength > 0.0 else null
-	_underwater_tint.visible = _underwater_strength > 0.001
-	var material := _underwater_tint.material as ShaderMaterial
-	material.set_shader_parameter("effect_strength", _underwater_strength)
-	if source != null:
-		material.set_shader_parameter("tint", source.get("underwater_tint"))
-		material.set_shader_parameter("darkness", float(source.get("underwater_darkness")))
-		material.set_shader_parameter("distortion", float(source.get("ocean_refraction_strength")) * 1.4)
 
 
 func _update_environment_feedback(delta: float, camera: Camera3D) -> void:
@@ -487,6 +481,10 @@ func _build_environment() -> void:
 	env.ssao_intensity = 1.4
 	var world_env := WorldEnvironment.new()
 	world_env.environment = env
+	_planet_effects = PlanetEffectsScript.new()
+	var compositor := Compositor.new()
+	compositor.compositor_effects = [_planet_effects]
+	world_env.compositor = compositor
 	add_child(world_env)
 	sun_light = DirectionalLight3D.new()
 	sun_light.light_energy = 1.2

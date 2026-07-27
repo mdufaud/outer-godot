@@ -1,17 +1,19 @@
 extends CharacterBody3D
 
-const WALK_SPEED := 7.0
-const SPRINT_MULT := 1.8
-const JUMP_SPEED := 6.36 # half jump height (v/sqrt(2))
-const JETPACK_ACCEL := 60.0
+const WALK_SPEED := 5.5
+const SPRINT_MULT := 1.5
+const JUMP_SPEED := 5.0
+const JETPACK_ACCEL := 12.0
 const JETPACK_BRAKE := 20.0
 const JETPACK_DRAG := 1.5
 const SWIM_DRAG := 2.0
 const WATER_JETPACK_ACCEL := 20.0
 const WATER_BUOYANCY := 1.05
+const STICK_TO_GROUND_SPEED := 0.5
 const PLAYER_HALF_HEIGHT := 0.8
 const GROUND_COLLISION_MARGIN := 0.35
 const GROUND_SNAP_DISTANCE := 0.5
+const GROUND_PROBE_DISTANCE := 0.8
 const GROUND_LERP := 10.0
 const FLOOR_MAX_ANGLE := 65.0
 const MOUSE_SENS := 0.002
@@ -22,6 +24,8 @@ var piloting := false
 var frame_source: Node3D = null
 var frame_velocity := Vector3.ZERO
 var celestial_system: Node = null
+var _fast_time_enabled := false
+var _stored_velocity := Vector3.ZERO
 
 @onready var camera: Camera3D = $Camera3D
 @onready var ray: RayCast3D = $Camera3D/RayCast3D
@@ -29,6 +33,7 @@ var celestial_system: Node = null
 
 
 func _ready() -> void:
+	add_to_group("fast_time_affected")
 	collision_mask |= 2
 	safe_margin = 0.05
 	floor_snap_length = GROUND_SNAP_DISTANCE
@@ -37,6 +42,8 @@ func _ready() -> void:
 	platform_floor_layers = 0
 	platform_wall_layers = 0
 	celestial_system = get_tree().get_first_node_in_group("celestial_system")
+	if celestial_system != null:
+		set_fast_time_enabled(celestial_system.is_fast_forward_enabled())
 	if not Touch.is_touch_ui():
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
@@ -73,8 +80,13 @@ func _physics_process(delta: float) -> void:
 		camera.rotate_x(-Touch.look_delta.y * MOUSE_SENS)
 		camera.rotation.x = clampf(camera.rotation.x, -1.5, 1.5)
 		Touch.look_delta = Vector2.ZERO
-	var fast_time: bool = celestial_system != null and celestial_system.is_fast_forward_enabled()
-	var gravity := Vector3.ZERO if fast_time else Gravity.get_gravity(global_position)
+	if _fast_time_enabled:
+		velocity = Vector3.ZERO
+		frame_source = null
+		frame_velocity = Vector3.ZERO
+		_update_prompt()
+		return
+	var gravity := Gravity.get_gravity(global_position)
 	var surface_source := Gravity.get_nearest_surface(global_position)
 	var reference_source := surface_source
 	if reference_source == null:
@@ -83,8 +95,7 @@ func _physics_process(delta: float) -> void:
 	var relative_gravity := gravity
 	if reference_source != null:
 		reference_velocity = reference_source.get("orbital_velocity")
-		if not fast_time:
-			relative_gravity = Gravity.get_relative_gravity(global_position, reference_source)
+		relative_gravity = Gravity.get_relative_gravity(global_position, reference_source)
 	if surface_source != null and relative_gravity.length_squared() > 0.0001:
 		up_dir = -relative_gravity.normalized()
 	_align_to_up(delta)
@@ -99,14 +110,14 @@ func _physics_process(delta: float) -> void:
 	frame_velocity = reference_velocity
 	var relative_velocity := velocity - previous_frame_velocity
 	var grounded := is_on_floor()
+	if not grounded and surface_source != null and relative_velocity.dot(up_dir) <= JUMP_SPEED * 0.5:
+		grounded = _ground_clearance(surface_source) <= GROUND_PROBE_DISTANCE
 	var water_depth := -INF
 	if reference_source != null and reference_source.has_method("get_water_depth"):
 		water_depth = reference_source.get_water_depth(global_position)
 	var swimming := water_depth > 0.2
 	var movement_basis := global_basis if grounded and not swimming else camera.global_basis
 	var wish_dir := movement_basis * Vector3(input_2d.x, 0.0, input_2d.y)
-	var jump_strength := Input.get_action_strength("jump")
-
 	if swimming:
 		var swim_target := wish_dir.limit_length(1.0) * WALK_SPEED
 		relative_velocity = relative_velocity.lerp(swim_target, 1.0 - exp(-SWIM_DRAG * delta))
@@ -119,7 +130,8 @@ func _physics_process(delta: float) -> void:
 		v_horiz = v_horiz.lerp(wish_dir * speed, clampf(GROUND_LERP * delta, 0.0, 1.0))
 		if Input.is_action_just_pressed("jump"):
 			v_vert += up_dir * JUMP_SPEED
-		v_vert += up_dir * jump_strength * JETPACK_ACCEL * delta
+		else:
+			v_vert -= up_dir * STICK_TO_GROUND_SPEED
 		relative_velocity = v_horiz + v_vert
 	else:
 		relative_velocity *= exp(-JETPACK_DRAG * delta)
@@ -132,6 +144,19 @@ func _physics_process(delta: float) -> void:
 	velocity = target_velocity
 	move_and_slide()
 	_update_prompt()
+
+
+func set_fast_time_enabled(enabled: bool) -> void:
+	if enabled == _fast_time_enabled:
+		return
+	_fast_time_enabled = enabled
+	if enabled:
+		_stored_velocity = velocity
+		velocity = Vector3.ZERO
+		frame_source = null
+		frame_velocity = Vector3.ZERO
+	else:
+		velocity = _stored_velocity
 
 
 func _align_to_up(delta: float) -> void:

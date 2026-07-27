@@ -90,8 +90,9 @@ func _init() -> void:
 				var gap: float = body_position.distance_to(CelestialSystem.read_state(state, j)) - radii[i] - radii[j]
 				min_gap[key] = minf(min_gap.get(key, INF), gap)
 
-	print("--- %.1f h simulated, %d bodies ---" % [hours, names.size()])
-	var unstable := false
+	var sun_drift := CelestialSystem.read_state(state, 0).length()
+	print("--- %.1f h simulated, %d bodies, sun drift %.9f ---" % [hours, names.size(), sun_drift])
+	var unstable := sun_drift > 0.000001
 	for i in names.size():
 		var drift: float = 0.0
 		if start_distance[i] > 0.0:

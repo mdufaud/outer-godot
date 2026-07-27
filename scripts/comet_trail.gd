@@ -58,14 +58,16 @@ func _process(_delta: float) -> void:
 	if target == null or not target.is_inside_tree():
 		return
 	var sun_position := sun.global_position if sun != null and sun.is_inside_tree() else Vector3.ZERO
-	var axis := (target.global_position - sun_position).normalized()
-	if axis.length_squared() < 0.5:
-		axis = Vector3.FORWARD
-	# A little of the travel direction bends the plume so it trails the body
-	# instead of sitting perfectly radial.
+	var anti_solar := (target.global_position - sun_position).normalized()
+	if anti_solar.length_squared() < 0.5:
+		anti_solar = Vector3.FORWARD
+	# The plume trails the track, not the sun: the eye faces where the body is
+	# going, and the plume has to sit exactly behind it. The anti-solar direction
+	# only gets to bend the axis a little.
+	var axis := anti_solar
 	var velocity: Variant = target.get("orbital_velocity")
 	if velocity is Vector3 and (velocity as Vector3).length() > 0.001:
-		axis = (axis - (velocity as Vector3).normalized() * VELOCITY_BEND).normalized()
+		axis = (-(velocity as Vector3).normalized() + anti_solar * VELOCITY_BEND).normalized()
 	var up := Vector3.UP if absf(axis.y) < 0.9 else Vector3.RIGHT
 	# The box points +Z downwind, and looking_at aims -Z, hence the negated axis.
 	global_transform = Transform3D(Basis.looking_at(-axis, up), target.global_position - axis * _head_offset)

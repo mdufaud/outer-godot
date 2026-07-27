@@ -12,7 +12,12 @@ const OceanWaveATexture := preload("res://assets/ocean_textures/wave_a.png")
 const OceanWaveBTexture := preload("res://assets/ocean_textures/wave_b.png")
 const OceanFoamTexture := preload("res://assets/ocean_textures/water_foam.png")
 const BlueNoiseTexture := preload("res://assets/planet_textures/blue_noise.png")
-const MESH_CACHE_VERSION := 8
+const MESH_CACHE_VERSION := 13
+const WATCHFUL_EYE_DIRECTION := Vector3(0.0, 0.18, 1.0)
+const OCEAN_FOAM_COLOR := Color(0.92, 0.98, 1.0)
+const ATMOSPHERE_DITHER_STRENGTH := 0.3
+const ATMOSPHERE_DITHER_SCALE := 3.89
+const ATMOSPHERE_SCATTERING_POINTS := 10
 
 static var _topology_cache: Dictionary = {}
 static var _topology_mutex := Mutex.new()
@@ -61,9 +66,8 @@ var _terrain: MeshInstance3D
 var _lod_meshes: Array[ArrayMesh] = []
 var _collision_mesh: ArrayMesh
 var _surface_material: ShaderMaterial
-var _ocean_material: ShaderMaterial
-var _atmosphere_material: ShaderMaterial
-var _atmosphere_mesh: MeshInstance3D
+var _ocean_params := PackedFloat32Array()
+var _atmosphere_params := PackedFloat32Array()
 var _atmosphere_lut: RefCounted
 var _atmosphere_lut_bound := false
 var _height_generator: RefCounted
@@ -74,6 +78,8 @@ var _storm_shell_radius := 0.0
 var _lod_resolutions: Array[int] = []
 var _active_lod := -1
 var _terrain_height_minmax := Vector2.ONE
+var _eye_basis := Basis.IDENTITY
+var _collision_shape: CollisionShape3D
 var _boot_jobs: Array[Dictionary] = []
 var _collision_ready := false
 var _collider_peak_radius := 0.0
@@ -110,7 +116,6 @@ func _process(delta: float) -> void:
 	_poll_atmosphere_lut()
 	_update_lod()
 	_update_lighting()
-	_update_atmosphere_visibility()
 	_update_storms(delta)
 
 
@@ -162,6 +167,17 @@ func get_boot_status() -> Dictionary:
 func set_orbital_state(next_position: Vector3, next_velocity: Vector3) -> void:
 	global_position = next_position
 	orbital_velocity = next_velocity
+	if body_kind == "watchful_eye" and next_velocity.length_squared() > 0.000001:
+		var travel_direction := next_velocity.normalized()
+		var up := Vector3.UP if absf(travel_direction.y) < 0.98 else Vector3.RIGHT
+		var eye_to_forward := Basis(Quaternion(WATCHFUL_EYE_DIRECTION.normalized(), Vector3.BACK))
+		_eye_basis = Basis.looking_at(-travel_direction, up) * eye_to_forward
+		# AnimatableBody3D reverts a rotation written on itself, so the mesh and
+		# the collider are turned instead; both must stay in sync.
+		if _terrain != null:
+			_terrain.basis = _eye_basis
+		if _collision_shape != null:
+			_collision_shape.basis = _eye_basis
 
 
 func get_collider_surface_radius(direction: Vector3) -> float:
@@ -214,7 +230,7 @@ func get_sunlit_spawn_direction(sun_position: Vector3) -> Vector3:
 			continue
 		var score := light
 		if _is_moon_profile():
-			score -= _height_generator.sample_shading_data(direction).w * 0.1
+			score -= _height_generator.sample_shading_data(_eye_basis.inverse() * direction).w * 0.1
 		if score <= best_score:
 			continue
 		if has_ocean and _collider_height_for(direction) <= _ocean_level_above_core() + 0.7:
@@ -259,6 +275,7 @@ func _build_terrain() -> void:
 	for subdivisions in profile.lod:
 		_lod_resolutions.append(int(subdivisions))
 	_terrain = MeshInstance3D.new()
+	_terrain.basis = _eye_basis
 	_surface_material = ShaderMaterial.new()
 	match surface_style:
 		"lava":
@@ -371,13 +388,7 @@ func _run_build_job(job: Dictionary) -> void:
 		faces.resize(indices.size())
 		for index in indices.size():
 			faces[index] = vertices[indices[index]]
-		# The terrain mesh is watertight and bodies always stay outside it.
-		# Backface collision lets the solver depenetrate a capsule wedged in a
-		# narrow notch towards the far side of a triangle, which catapults it.
-		var shape := ConcavePolygonShape3D.new()
-		shape.backface_collision = true
-		shape.set_faces(faces)
-		job.shape = shape
+		job.faces = faces
 		var peak := 0.0
 		for vertex in vertices:
 			peak = maxf(peak, vertex.length())
@@ -390,9 +401,14 @@ func _run_build_job(job: Dictionary) -> void:
 
 func _finish_build_job(job: Dictionary) -> void:
 	if job.kind == "collision":
+		var shape := ConcavePolygonShape3D.new()
+		shape.backface_collision = true
+		shape.set_faces(job.faces)
 		var collision := CollisionShape3D.new()
-		collision.shape = job.shape
+		collision.shape = shape
+		collision.basis = _eye_basis
 		add_child(collision)
+		_collision_shape = collision
 		_collider_peak_radius = float(job.peak)
 		_collision_ready = true
 		return
@@ -405,74 +421,64 @@ func _finish_build_job(job: Dictionary) -> void:
 func _build_ocean() -> void:
 	if not has_ocean:
 		return
-	var ocean := MeshInstance3D.new()
-	var mesh := SphereMesh.new()
-	mesh.radius = radius + ocean_level + 0.03
-	mesh.height = mesh.radius * 2.0
-	mesh.radial_segments = 128
-	mesh.rings = 64
-	_ocean_material = ShaderMaterial.new()
-	_ocean_material.shader = preload("res://shaders/spherical_ocean.gdshader")
-	_ocean_material.set_shader_parameter("planet_center", global_position)
-	_ocean_material.set_shader_parameter("ocean_radius", mesh.radius)
-	_ocean_material.set_shader_parameter("planet_scale", radius)
-	_ocean_material.set_shader_parameter("shallow_color", ocean_shallow_color)
-	_ocean_material.set_shader_parameter("deep_color", ocean_deep_color)
-	_ocean_material.set_shader_parameter("wave_strength", ocean_wave_strength)
-	_ocean_material.set_shader_parameter("wave_scale", ocean_wave_scale)
-	_ocean_material.set_shader_parameter("wave_speed", ocean_wave_speed)
-	_ocean_material.set_shader_parameter("smoothness", ocean_smoothness)
-	_ocean_material.set_shader_parameter("depth_multiplier", ocean_depth_multiplier)
-	_ocean_material.set_shader_parameter("alpha_multiplier", ocean_alpha_multiplier)
-	_ocean_material.set_shader_parameter("specular_color", ocean_specular_color)
-	_ocean_material.set_shader_parameter("wave_normal_a", OceanWaveATexture)
-	_ocean_material.set_shader_parameter("wave_normal_b", OceanWaveBTexture)
-	_ocean_material.set_shader_parameter("foam_texture", OceanFoamTexture)
-	_ocean_material.set_shader_parameter("foam_scale", ocean_foam_scale)
-	_ocean_material.set_shader_parameter("foam_distance", ocean_foam_distance)
-	_ocean_material.set_shader_parameter("refraction_strength", ocean_refraction_strength)
+	var foam_distance := ocean_foam_distance
+	var refraction_strength := ocean_refraction_strength
 	if quality_profile == "mobile_low":
-		_ocean_material.set_shader_parameter("foam_distance", ocean_foam_distance * 0.65)
-		_ocean_material.set_shader_parameter("refraction_strength", 0.0)
+		foam_distance = ocean_foam_distance * 0.65
+		refraction_strength = 0.0
+	var ambient_color := Color(0.0, 0.0, 0.0)
+	var ambient_strength := 0.0
+	var sky_diffusion := 0.0
 	if body_kind == "cyclops":
-		_ocean_material.set_shader_parameter("ambient_color", Color(0.08, 0.3, 0.29))
-		_ocean_material.set_shader_parameter("ambient_strength", 0.24)
-		_ocean_material.set_shader_parameter("sky_diffusion", 0.22)
-	_ocean_material.render_priority = 1
-	ocean.mesh = mesh
-	ocean.material_override = _ocean_material
-	ocean.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(ocean)
+		ambient_color = Color(0.08, 0.3, 0.29)
+		ambient_strength = 0.24
+		sky_diffusion = 0.22
+	_ocean_params = PackedFloat32Array([
+		global_position.x, global_position.y, global_position.z, get_ocean_effect_radius(),
+		0.0, 1.0, 0.0, radius,
+		ocean_shallow_color.r, ocean_shallow_color.g, ocean_shallow_color.b, ocean_depth_multiplier,
+		ocean_deep_color.r, ocean_deep_color.g, ocean_deep_color.b, ocean_alpha_multiplier,
+		ocean_specular_color.r, ocean_specular_color.g, ocean_specular_color.b, ocean_smoothness,
+		ambient_color.r, ambient_color.g, ambient_color.b, ambient_strength,
+		OCEAN_FOAM_COLOR.r, OCEAN_FOAM_COLOR.g, OCEAN_FOAM_COLOR.b, sky_diffusion,
+		ocean_wave_strength, ocean_wave_scale, ocean_wave_speed, refraction_strength,
+		ocean_foam_scale, foam_distance, 0.0, 0.0,
+	])
 
 
 func _build_atmosphere() -> void:
 	if not has_atmosphere:
 		return
-	_atmosphere_mesh = MeshInstance3D.new()
-	var mesh := QuadMesh.new()
-	mesh.size = Vector2(2.0, 2.0)
-	_atmosphere_material = ShaderMaterial.new()
-	_atmosphere_material.shader = preload("res://shaders/planet_atmosphere.gdshader")
-	_atmosphere_material.set_shader_parameter("planet_center", global_position)
-	_atmosphere_material.set_shader_parameter("planet_radius", radius)
-	_atmosphere_material.set_shader_parameter("atmosphere_radius", radius * (1.0 + atmosphere_scale))
-	_atmosphere_material.set_shader_parameter("atmosphere_color", atmosphere_color)
-	_atmosphere_material.set_shader_parameter("density_falloff", atmosphere_density_falloff)
-	_atmosphere_material.set_shader_parameter("scattering_coefficients", Vector3(
+	var scattering := Vector3(
 		pow(400.0 / atmosphere_wavelengths.x, 4.0),
 		pow(400.0 / atmosphere_wavelengths.y, 4.0),
 		pow(400.0 / atmosphere_wavelengths.z, 4.0)
-	) * atmosphere_scattering_strength)
-	_atmosphere_material.set_shader_parameter("intensity", atmosphere_intensity)
-	_atmosphere_material.set_shader_parameter("blue_noise", BlueNoiseTexture)
-	_atmosphere_mesh.mesh = mesh
-	_atmosphere_mesh.material_override = _atmosphere_material
-	_atmosphere_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_atmosphere_mesh.custom_aabb = AABB(Vector3(-10000.0, -10000.0, -10000.0), Vector3(20000.0, 20000.0, 20000.0))
-	_atmosphere_mesh.visible = false
-	add_child(_atmosphere_mesh)
+	) * atmosphere_scattering_strength
+	_atmosphere_params = PackedFloat32Array([
+		global_position.x, global_position.y, global_position.z, radius,
+		radius * (1.0 + atmosphere_scale), atmosphere_density_falloff, atmosphere_intensity, ATMOSPHERE_DITHER_STRENGTH,
+		0.0, 1.0, 0.0, ATMOSPHERE_DITHER_SCALE,
+		scattering.x, scattering.y, scattering.z, float(ATMOSPHERE_SCATTERING_POINTS),
+		atmosphere_color.r, atmosphere_color.g, atmosphere_color.b, get_ocean_effect_radius(),
+	])
 	_atmosphere_lut = AtmosphereLutScript.new()
 	_atmosphere_lut.initialize(1.0 + atmosphere_scale, atmosphere_density_falloff)
+
+
+func get_ocean_effect_radius() -> float:
+	return radius + ocean_level + 0.03 if has_ocean else 0.0
+
+
+func get_ocean_effect_params() -> PackedFloat32Array:
+	return _ocean_params
+
+
+func get_atmosphere_effect_params() -> PackedFloat32Array:
+	return _atmosphere_params
+
+
+func get_atmosphere_lut_texture() -> Texture2D:
+	return _atmosphere_lut.texture if _atmosphere_lut_bound else null
 
 
 func _build_storm_system() -> void:
@@ -617,17 +623,7 @@ func _update_storms(delta: float) -> void:
 func _poll_atmosphere_lut() -> void:
 	if _atmosphere_lut_bound or _atmosphere_lut == null or _atmosphere_lut.texture == null:
 		return
-	_atmosphere_material.set_shader_parameter("baked_optical_depth", _atmosphere_lut.texture)
-	_atmosphere_mesh.visible = true
 	_atmosphere_lut_bound = true
-
-
-func _update_atmosphere_visibility() -> void:
-	if _atmosphere_mesh == null or not _atmosphere_lut_bound:
-		return
-	var camera := get_viewport().get_camera_3d()
-	var camera_underwater := camera != null and has_ocean and get_water_depth(camera.global_position) > 0.0
-	_atmosphere_mesh.visible = not camera_underwater
 
 
 func _update_lod() -> void:
@@ -660,12 +656,20 @@ func _update_lighting() -> void:
 	var direction := (sun.global_position - global_position).normalized()
 	if surface_style == "terrain":
 		_surface_material.set_shader_parameter("sun_direction", direction)
-	if _ocean_material:
-		_ocean_material.set_shader_parameter("planet_center", global_position)
-		_ocean_material.set_shader_parameter("sun_direction", direction)
-	if _atmosphere_material:
-		_atmosphere_material.set_shader_parameter("planet_center", global_position)
-		_atmosphere_material.set_shader_parameter("sun_direction", direction)
+	if not _ocean_params.is_empty():
+		_ocean_params[0] = global_position.x
+		_ocean_params[1] = global_position.y
+		_ocean_params[2] = global_position.z
+		_ocean_params[4] = direction.x
+		_ocean_params[5] = direction.y
+		_ocean_params[6] = direction.z
+	if not _atmosphere_params.is_empty():
+		_atmosphere_params[0] = global_position.x
+		_atmosphere_params[1] = global_position.y
+		_atmosphere_params[2] = global_position.z
+		_atmosphere_params[8] = direction.x
+		_atmosphere_params[9] = direction.y
+		_atmosphere_params[10] = direction.z
 
 
 func get_generator_error() -> String:
@@ -768,7 +772,10 @@ func _build_mesh_from_factors(resolution: int, factors: PackedFloat32Array, shad
 	final_arrays[Mesh.ARRAY_INDEX] = topology.indices
 	var final_mesh := ArrayMesh.new()
 	final_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, final_arrays)
-	final_mesh.set_meta("height_minmax", Vector2(minimum_factor, maximum_factor))
+	# Spires stand far above the crust, so leaving them in the range would squash
+	# every crust colour into the bottom of the shading ramp.
+	maximum_factor -= _height_generator.spike_height_span()
+	final_mesh.set_meta("height_minmax", Vector2(minimum_factor, maxf(maximum_factor, minimum_factor + 0.0001)))
 	final_mesh.set_meta("average_biome", biome_sum / maxf(float(directions.size()), 1.0))
 	return final_mesh
 
@@ -1011,6 +1018,19 @@ func _apply_reference_palette() -> void:
 			_surface_material.set_shader_parameter("moon_biome_blend_strength", 0.5)
 			_surface_material.set_shader_parameter("moon_biome_warp_strength", 5.0)
 			_surface_material.set_shader_parameter("moon_random_biome_values", Vector4(-2.1, 0.35, -2.8, 4.2))
+			_surface_material.set_shader_parameter("moon_smoothness_a", 0.42)
+			_surface_material.set_shader_parameter("moon_smoothness_b", 0.16)
+			_surface_material.set_shader_parameter("moon_smoothness_ejecta", 0.55)
+			_surface_material.set_shader_parameter("moon_specular", 0.6)
+			_surface_material.set_shader_parameter("eye_strength", 1.0)
+			_surface_material.set_shader_parameter("eye_direction", WATCHFUL_EYE_DIRECTION.normalized())
+			_surface_material.set_shader_parameter("eye_sclera_radius", 0.6)
+			_surface_material.set_shader_parameter("eye_iris_radius", 0.3)
+			_surface_material.set_shader_parameter("eye_pupil_radius", 0.12)
+			_surface_material.set_shader_parameter("eye_sclera_color", Color(0.88, 0.95, 1.0))
+			_surface_material.set_shader_parameter("eye_iris_color", Color(0.07, 0.24, 0.34))
+			_surface_material.set_shader_parameter("eye_pupil_color", Color(0.01, 0.02, 0.035))
+			_surface_material.set_shader_parameter("eye_glow", 0.12)
 
 
 func _is_moon_profile() -> bool:
@@ -1022,7 +1042,8 @@ func _collider_height_for(direction: Vector3) -> float:
 
 
 func _height_for(direction: Vector3) -> float:
-	return _core_radius() * (_height_generator.sample_factor(direction.normalized()) - 1.0)
+	var local_direction := _eye_basis.inverse() * direction.normalized()
+	return _core_radius() * (_height_generator.sample_factor(local_direction) - 1.0)
 
 
 func _core_radius() -> float:

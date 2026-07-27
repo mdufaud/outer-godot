@@ -34,6 +34,19 @@ uniform float moon_average_biome_noise = 1.0;
 uniform float moon_smoothness_a = 0.018220196;
 uniform float moon_smoothness_b = 0.18875508;
 uniform float moon_smoothness_ejecta = 0.037;
+// Rocky moons stay matte; an icy crust needs a highlight to read as ice.
+uniform float moon_specular = 0.0;
+// Painted eye. Relief alone turns into a black pit the moment the light stops
+// grazing it, so the eye is an albedo feature and reads from any distance.
+uniform float eye_strength = 0.0;
+uniform vec3 eye_direction = vec3(0.0, 0.176, 0.984);
+uniform float eye_sclera_radius = 0.62;
+uniform float eye_iris_radius = 0.34;
+uniform float eye_pupil_radius = 0.14;
+uniform vec4 eye_sclera_color : source_color = vec4(0.86, 0.94, 0.98, 1.0);
+uniform vec4 eye_iris_color : source_color = vec4(0.05, 0.32, 0.46, 1.0);
+uniform vec4 eye_pupil_color : source_color = vec4(0.01, 0.02, 0.04, 1.0);
+uniform float eye_glow = 0.0;
 uniform vec3 asteroid_col_flat : source_color = vec3(0.38, 0.35, 0.32);
 uniform vec3 asteroid_col_flat_deep : source_color = vec3(0.19, 0.17, 0.16);
 uniform vec3 asteroid_col_steep : source_color = vec3(0.28, 0.26, 0.25);
@@ -228,11 +241,29 @@ void fragment() {
 		ALBEDO = mix(mix(col_biome_a, col_biome_b, biome_weight), moon_ejecta.rgb, ejecta_weight);
 		float smoothness = mix(moon_smoothness_a, moon_smoothness_b, biome_weight);
 		smoothness = mix(smoothness, moon_smoothness_ejecta, ejecta_weight);
+		if (eye_strength > 0.0) {
+			vec3 eye_up = normalize(terrain_vertex);
+			float eye_angle = acos(clamp(dot(eye_up, eye_direction), -1.0, 1.0));
+			vec3 eye_side = normalize(cross(eye_direction, vec3(0.0, 1.0, 0.0)));
+			vec3 eye_top = cross(eye_direction, eye_side);
+			float around = atan(dot(eye_up, eye_top), dot(eye_up, eye_side));
+			// Iris fibres, so the ring is not a flat disc of colour.
+			float fibres = 0.5 + 0.5 * sin(around * 34.0 + source_noise.r * 6.0);
+			float sclera = 1.0 - blend(eye_sclera_radius, eye_sclera_radius * 0.28, eye_angle);
+			float iris = 1.0 - blend(eye_iris_radius, eye_iris_radius * 0.42, eye_angle);
+			float pupil = 1.0 - blend(eye_pupil_radius, eye_pupil_radius * 0.5, eye_angle);
+			vec3 iris_col = eye_iris_color.rgb * mix(0.72, 1.28, fibres);
+			ALBEDO = mix(ALBEDO, eye_sclera_color.rgb, sclera * eye_strength);
+			ALBEDO = mix(ALBEDO, iris_col, iris * eye_strength);
+			ALBEDO = mix(ALBEDO, eye_pupil_color.rgb, pupil * eye_strength);
+			smoothness = mix(smoothness, 0.6, sclera * eye_strength);
+			EMISSION = eye_iris_color.rgb * (iris - pupil) * eye_glow;
+		}
 		ROUGHNESS = 1.0 - smoothness;
 		// Unity's MetallicA of 0.811 relies on reflection probes; without them a
 		// metallic moon just renders black here.
 		METALLIC = 0.0;
-		SPECULAR = 0.0;
+		SPECULAR = moon_specular;
 		vec3 normal_flat = object_to_tangent(triplanar_normal(terrain_vertex / planet_radius, mesh_normal, 20.0, moon_normal_flat), mesh_normal, terrain_tangent);
 		vec3 normal_steep = object_to_tangent(triplanar_normal(terrain_vertex / planet_radius, mesh_normal, 20.0, moon_normal_steep), mesh_normal, terrain_tangent);
 		float normal_blend = mix(source_noise.r, source_noise.g, blend(0.0, 2.0, terrain_data.z));

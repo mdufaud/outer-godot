@@ -85,12 +85,23 @@ float sample_density(vec3 position) {
 	if (cone + coma < 0.006) {
 		return 0.0;
 	}
-	vec3 flow = position * noise_scale + vec3(0.0, 0.0, -TIME * flow_speed * noise_scale);
+	float flow_time = TIME * flow_speed;
+	vec2 flutter = vec2(
+		sin(rel.z * 0.031 - TIME * 1.1),
+		cos(rel.z * 0.023 - TIME * 0.83)
+	) * mix(2.0, 18.0, along);
+	vec3 flow = vec3(
+		(rel.xy + flutter) * noise_scale,
+		(rel.z - flow_time) * noise_scale
+	);
 	// Squashed across the axis and stretched along it, so the noise reads as
 	// filaments streaming outward rather than as blobs.
 	float wisps = smoothstep(0.18, 0.72, fbm3(vec3(flow.xy * 2.6, flow.z * 0.55)));
+	float packet_phase = (rel.z - flow_time) * 0.055;
+	float packets = smoothstep(-0.35, 0.7, sin(packet_phase + sin(packet_phase * 0.37) * 1.8));
+	float shedding = mix(1.0, mix(0.42, 1.4, packets), smoothstep(0.08, 0.72, along));
 	// The coma stays smooth, the tail is where the streamers show.
-	return coma * mix(0.75, 1.15, wisps) + cone * mix(0.1, 1.3, wisps);
+	return coma * mix(0.75, 1.15, wisps) + cone * mix(0.08, 1.35, wisps) * shedding;
 }
 
 void vertex() {

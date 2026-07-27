@@ -29,6 +29,7 @@ func _ready() -> void:
 	corona_quad.size = Vector2.ONE * radius * 3.4
 	var corona_mat := ShaderMaterial.new()
 	corona_mat.shader = preload("res://shaders/corona.gdshader")
+	corona_mat.render_priority = 10
 	corona_quad.material = corona_mat
 	corona.mesh = corona_quad
 	corona.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF

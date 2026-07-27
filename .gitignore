@@ -5,6 +5,8 @@ bin/
 docs/
 export_presets.cfg
 .editorconfig
-tests/
+tests/*
+!tests/planet_gallery.gd
+!tests/planet_gallery.tscn
 .claude
 tmp/

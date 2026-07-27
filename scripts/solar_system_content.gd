@@ -98,7 +98,7 @@ static func get_body_definitions() -> Array[Dictionary]:
 			"name": "Watchful Eye",
 			"position": Vector3(10676.6, 0.0, 0.0),
 			"data": {
-				"body_kind": "watchful_eye", "surface_style": "terrain", "radius": 20.7, "gravity": 4.5,
+				"body_kind": "watchful_eye", "surface_style": "terrain", "radius": 20.7, "gravity": 8.0,
 				"seed": 7, "ocean": false,
 				"atmosphere": false,
 			},

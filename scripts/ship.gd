@@ -26,9 +26,13 @@ var _thrusters: Array[GPUParticles3D] = []
 var _hatch_pivot: Node3D
 var _hatch_target := -1.15
 var _had_ground_contact := false
+var _fast_time_enabled := false
+var _stored_linear_velocity := Vector3.ZERO
+var _stored_angular_velocity := Vector3.ZERO
 
 
 func _ready() -> void:
+	add_to_group("fast_time_affected")
 	collision_mask |= 2
 	mass = 8.0
 	angular_damp = 3.0
@@ -67,6 +71,9 @@ func _ready() -> void:
 	cockpit_cam.position = Vector3(0, 1.0, -1.4)
 	cockpit_cam.far = 8000.0
 	add_child(cockpit_cam)
+	var celestial_system := get_tree().get_first_node_in_group("celestial_system")
+	if celestial_system != null:
+		set_fast_time_enabled(celestial_system.is_fast_forward_enabled())
 
 
 func _process(delta: float) -> void:
@@ -260,6 +267,23 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 	)
 	if rot_input.length_squared() > 0.0:
 		state.apply_torque(global_basis * rot_input * TORQUE * mass)
+
+
+func set_fast_time_enabled(enabled: bool) -> void:
+	if enabled == _fast_time_enabled:
+		return
+	_fast_time_enabled = enabled
+	if enabled:
+		_stored_linear_velocity = linear_velocity
+		_stored_angular_velocity = angular_velocity
+		linear_velocity = Vector3.ZERO
+		angular_velocity = Vector3.ZERO
+		freeze = true
+		_set_thrusters(false)
+	else:
+		freeze = false
+		linear_velocity = _stored_linear_velocity
+		angular_velocity = _stored_angular_velocity
 
 
 func enter_pilot(player: Node3D) -> void:

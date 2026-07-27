@@ -23,6 +23,15 @@ layout(std430, set = 0, binding = 3) readonly buffer SettingBuffer {
 	vec4 values[];
 } settings;
 
+struct Spike {
+	vec4 direction_height;
+	vec4 shape;
+};
+
+layout(std430, set = 0, binding = 4) readonly buffer SpikeBuffer {
+	Spike values[];
+} spikes;
+
 layout(push_constant, std430) uniform Parameters {
 	ivec4 counts;
 } parameters;
@@ -175,11 +184,29 @@ float earth_height(vec3 position) {
 	return 1.0 + continent * 0.01 + ridge * 0.01 * mask;
 }
 
+// Ice spires welded into the heightfield. Each one is a narrow lobe of the
+// direction sphere raised by a high power of the alignment, so the mesh grows a
+// real spike instead of carrying decoration geometry. Taking the maximum lets
+// neighbours merge into a ridge rather than stacking into a lump.
+float spike_height(vec3 position) {
+	vec3 direction = normalize(position);
+	float height = 0.0;
+	for (int index = 0; index < parameters.counts.w; index++) {
+		Spike spike = spikes.values[index];
+		float alignment = max(dot(direction, spike.direction_height.xyz), 0.0);
+		float needle = pow(alignment, spike.shape.x);
+		// The taper is thinned near the tip so the spire ends as a point.
+		needle *= mix(1.0, needle, spike.shape.y);
+		height = max(height, spike.direction_height.w * needle);
+	}
+	return height;
+}
+
 float moon_height(vec3 position) {
 	float shape = simple_noise(position, 10);
 	float ridge = smoothed_ridge_noise(position, 13);
 	float ridge2 = smoothed_ridge_noise(position, 16);
-	return 1.0 + crater_depth(position) + (shape + ridge + ridge2) * 0.01;
+	return 1.0 + crater_depth(position) + (shape + ridge + ridge2) * 0.01 + spike_height(position);
 }
 
 float alien_height(vec3 position) {
