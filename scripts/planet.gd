@@ -443,6 +443,7 @@ func _build_ocean() -> void:
 		OCEAN_FOAM_COLOR.r, OCEAN_FOAM_COLOR.g, OCEAN_FOAM_COLOR.b, sky_diffusion,
 		ocean_wave_strength, ocean_wave_scale, ocean_wave_speed, refraction_strength,
 		ocean_foam_scale, foam_distance, 0.0, 0.0,
+		underwater_tint.r, underwater_tint.g, underwater_tint.b, underwater_darkness,
 	])
 
 

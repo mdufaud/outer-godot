@@ -3,7 +3,7 @@ extends CharacterBody3D
 const WALK_SPEED := 5.5
 const SPRINT_MULT := 1.5
 const JUMP_SPEED := 5.0
-const JETPACK_ACCEL := 12.0
+const JETPACK_ACCEL := 25.0
 const JETPACK_BRAKE := 20.0
 const JETPACK_DRAG := 1.5
 const SWIM_DRAG := 2.0
@@ -23,6 +23,7 @@ var up_dir := Vector3.UP
 var piloting := false
 var frame_source: Node3D = null
 var frame_velocity := Vector3.ZERO
+var frame_position := Vector3.ZERO
 var celestial_system: Node = null
 var _fast_time_enabled := false
 var _stored_velocity := Vector3.ZERO
@@ -34,6 +35,7 @@ var _stored_velocity := Vector3.ZERO
 
 func _ready() -> void:
 	add_to_group("fast_time_affected")
+	add_to_group("origin_shift_listener")
 	collision_mask |= 2
 	safe_margin = 0.05
 	floor_snap_length = GROUND_SNAP_DISTANCE
@@ -104,10 +106,14 @@ func _physics_process(delta: float) -> void:
 	var input_2d := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 	var speed := WALK_SPEED * (SPRINT_MULT if Input.is_action_pressed("sprint") else 1.0)
 	var previous_frame_velocity := reference_velocity
+	var frame_offset := Vector3.ZERO
 	if reference_source == frame_source:
 		previous_frame_velocity = frame_velocity
+		frame_offset = reference_source.global_position - frame_position
 	frame_source = reference_source
 	frame_velocity = reference_velocity
+	if reference_source != null:
+		frame_position = reference_source.global_position
 	var relative_velocity := velocity - previous_frame_velocity
 	var grounded := is_on_floor()
 	if not grounded and surface_source != null and relative_velocity.dot(up_dir) <= JUMP_SPEED * 0.5:
@@ -140,10 +146,22 @@ func _physics_process(delta: float) -> void:
 		if Input.is_action_pressed("brake"):
 			relative_velocity = relative_velocity.move_toward(Vector3.ZERO, JETPACK_BRAKE * delta)
 
-	var target_velocity := relative_velocity + reference_velocity + relative_gravity * delta
-	velocity = target_velocity
+	# CharacterBody3D judges floor snap, slope and collision sweeps against
+	# `velocity` in world space, and Terra alone orbits at 32 u/s. Feeding the
+	# frame velocity in there made the jump die on the pole facing the travel
+	# direction and overshoot on the opposite one. Ride the body with an exact
+	# position offset instead, and move only the relative velocity.
+	global_position += frame_offset
+	velocity = relative_velocity + relative_gravity * delta
 	move_and_slide()
+	if grounded and not swimming and not Input.is_action_just_pressed("jump"):
+		apply_floor_snap()
+	velocity += reference_velocity
 	_update_prompt()
+
+
+func apply_origin_shift(offset: Vector3) -> void:
+	frame_position += offset
 
 
 func set_fast_time_enabled(enabled: bool) -> void:

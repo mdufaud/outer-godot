@@ -9,6 +9,7 @@ layout(set = 0, binding = 2) uniform sampler2D depth_texture;
 layout(set = 0, binding = 3) uniform sampler2D wave_normal_a;
 layout(set = 0, binding = 4) uniform sampler2D wave_normal_b;
 layout(set = 0, binding = 5) uniform sampler2D foam_texture;
+layout(set = 0, binding = 7) uniform sampler2D caustic_texture;
 
 struct OceanBody {
 	vec4 centre_radius;
@@ -20,6 +21,7 @@ struct OceanBody {
 	vec4 foam_colour;
 	vec4 wave;
 	vec4 foam;
+	vec4 underwater;
 };
 
 layout(std430, set = 0, binding = 6) restrict readonly buffer OceanBuffer {
@@ -94,6 +96,20 @@ float triplanar_foam(vec3 position, vec3 normal, float scale, vec2 offset, float
 	return dot(vec3(x, y, z), weights);
 }
 
+float directional_caustic(vec3 position, vec3 normal, vec3 light_direction, float scale, vec2 offset, float lod) {
+	vec3 tangent = light_direction - normal * dot(light_direction, normal);
+	if (dot(tangent, tangent) < 0.0001) {
+		tangent = cross(normal, vec3(0.0, 1.0, 0.0));
+		if (dot(tangent, tangent) < 0.0001) {
+			tangent = cross(normal, vec3(1.0, 0.0, 0.0));
+		}
+	}
+	tangent = normalize(tangent);
+	vec3 bitangent = normalize(cross(normal, tangent));
+	vec2 uv = vec2(dot(position, tangent), dot(position, bitangent)) * scale + offset;
+	return textureLod(caustic_texture, uv, lod).r;
+}
+
 vec3 ray_direction_at(vec2 screen_uv, vec3 camera_position) {
 	vec2 ndc = screen_uv * 2.0 - 1.0;
 	vec4 near_point = params.inverse_view_projection * vec4(ndc, 1.0, 1.0);
@@ -136,6 +152,8 @@ void main() {
 	float refraction_strength = body.wave.w;
 	float foam_scale = body.foam.x;
 	float foam_distance = body.foam.y;
+	vec3 underwater_tint = body.underwater.rgb;
+	float underwater_darkness = body.underwater.w;
 	float time = params.camera_position.w;
 
 	vec2 ndc = screen_uv * 2.0 - 1.0;
@@ -144,7 +162,8 @@ void main() {
 	vec3 ray_direction = normalize(near_point.xyz / near_point.w - camera_position);
 
 	vec2 hit = ray_sphere(planet_centre, ocean_radius, camera_position, ray_direction);
-	float ocean_depth = min(hit.y, scene_distance(screen_uv) - hit.x);
+	float scene_distance_value = scene_distance(screen_uv);
+	float ocean_depth = min(hit.y, scene_distance_value - hit.x);
 	if (ocean_depth <= 0.0) {
 		imageStore(destination_color, coordinate, vec4(source, 1.0));
 		return;
@@ -178,6 +197,10 @@ void main() {
 	vec3 normal_a = triplanar_normal(intersection, sphere_normal, normal_scale, offset_a, normal_lod, wave_normal_a);
 	vec3 detail_normal = triplanar_normal(intersection, normal_a, normal_scale, offset_b, normal_lod, wave_normal_b);
 	vec3 wave_normal = normalize(mix(sphere_normal, detail_normal, clamp(wave_strength, 0.0, 1.0)));
+	vec3 ray_right = normalize(ray_direction_x - ray_direction);
+	vec3 ray_up = normalize(ray_direction_y - ray_direction);
+	vec3 wave_delta = wave_normal - sphere_normal;
+	vec2 underwater_offset = vec2(dot(wave_delta, ray_right), dot(wave_delta, ray_up));
 	float specular_wave_strength = clamp(wave_strength * exp2(-4.0 * normal_lod), 0.0, 1.0);
 	vec3 specular_normal = normalize(mix(sphere_normal, detail_normal, specular_wave_strength));
 	float depth_blend = 1.0 - exp(-ocean_depth / max(planet_scale, 0.00001) * depth_multiplier);
@@ -203,5 +226,57 @@ void main() {
 		refraction_uv = screen_uv;
 	}
 	vec3 refracted_scene = texture(source_color, refraction_uv).rgb;
-	imageStore(destination_color, coordinate, vec4(mix(refracted_scene, lit_ocean, alpha), 1.0));
+	vec3 surface_colour = mix(refracted_scene, lit_ocean, alpha);
+
+	float underwater_amount = 1.0 - above_water;
+	float underwater_refraction = refraction_strength * 0.7 * (1.0 - exp(-ocean_depth / max(planet_scale * 0.08, 0.5)));
+	vec2 underwater_uv = clamp(screen_uv + underwater_offset * underwater_refraction, vec2(0.001), vec2(0.999));
+	vec3 underwater_scene = min(texture(source_color, underwater_uv).rgb, vec3(1.25));
+	float receiver_is_scene = 1.0 - step(hit.y - 0.001, scene_distance_value);
+	vec3 receiver_position = camera_position + ray_direction * min(scene_distance_value, hit.y) - planet_centre;
+	float receiver_depth = max(ocean_radius - length(receiver_position), 0.0);
+	vec3 receiver_normal = normalize(receiver_position);
+	float caustic_pattern = 0.0;
+	if (receiver_is_scene > 0.5) {
+		float caustic_scale = max(foam_scale * 28.0, 24.0);
+		float caustic_lod = texture_lod(
+			max(scene_distance_value, 0.0) / max(float(size.y), 1.0),
+			caustic_scale / max(planet_scale, 0.00001),
+			caustic_texture
+		);
+		float caustic_time = time * max(wave_speed, 0.1) * 0.06;
+		vec3 receiver_position_normalized = receiver_position / max(planet_scale, 0.00001);
+		float caustic_a = directional_caustic(
+			receiver_position_normalized, receiver_normal, normalize(sun_direction),
+			caustic_scale, vec2(caustic_time, -caustic_time * 0.73), caustic_lod
+		);
+		float caustic_b = directional_caustic(
+			receiver_position_normalized, receiver_normal, normalize(sun_direction),
+			caustic_scale * 1.27,
+			vec2(-caustic_time * 0.61, caustic_time * 0.43) + vec2(caustic_a * 0.07),
+			caustic_lod
+		);
+		float caustic_value = max(caustic_a, caustic_b);
+		caustic_pattern = smoothstep(0.76, 0.98, caustic_value);
+		caustic_pattern *= caustic_pattern;
+	}
+	float receiver_light = max(dot(receiver_normal, normalize(sun_direction)), 0.0);
+	float caustic_fade = exp(-receiver_depth / max(planet_scale * 0.12, 0.5));
+	vec3 caustic_colour = mix(vec3(0.72, 0.9, 1.0), normalize(underwater_tint + 0.001), 0.28);
+	underwater_scene += caustic_colour * caustic_pattern * receiver_light * caustic_fade * receiver_is_scene * 0.085;
+
+	float tint_peak = max(max(underwater_tint.r, underwater_tint.g), underwater_tint.b);
+	vec3 tint_ratio = underwater_tint / max(tint_peak, 0.001);
+	vec3 absorption = mix(vec3(2.3), vec3(0.28), tint_ratio) * mix(0.75, 1.8, underwater_darkness);
+	float optical_distance = ocean_depth / max(planet_scale * 0.1, 1.0);
+	vec3 transmission = exp(-absorption * optical_distance);
+	float camera_depth = max(ocean_radius - length(camera_position - planet_centre), 0.0);
+	vec3 camera_up = normalize(camera_position - planet_centre);
+	float daylight = smoothstep(-0.08, 0.35, dot(camera_up, normalize(sun_direction)));
+	float surface_light = exp(-camera_depth / max(planet_scale * 0.16, 1.0) * mix(1.0, 2.6, underwater_darkness));
+	vec3 scattering_colour = underwater_tint * (0.12 + 0.88 * daylight * surface_light);
+	float forward_scattering = pow(max(dot(ray_direction, normalize(sun_direction)), 0.0), 10.0);
+	scattering_colour += caustic_colour * forward_scattering * daylight * surface_light * 0.04;
+	vec3 underwater_colour = underwater_scene * transmission + scattering_colour * (vec3(1.0) - transmission);
+	imageStore(destination_color, coordinate, vec4(mix(surface_colour, underwater_colour, underwater_amount), 1.0));
 }

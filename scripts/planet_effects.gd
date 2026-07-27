@@ -15,10 +15,11 @@ const BlitShaderPath := "res://shaders/blit_effect.glsl"
 const OceanWaveATexture := preload("res://assets/ocean_textures/wave_a.png")
 const OceanWaveBTexture := preload("res://assets/ocean_textures/wave_b.png")
 const OceanFoamTexture := preload("res://assets/ocean_textures/water_foam.png")
+const OceanCausticTexture := preload("res://assets/ocean_textures/caustics.png")
 const BlueNoiseTexture := preload("res://assets/planet_textures/blue_noise.png")
 
 const MAX_BODIES := 16
-const OCEAN_FLOATS := 36
+const OCEAN_FLOATS := 40
 const ATMOSPHERE_FLOATS := 20
 const PUSH_CONSTANT_SIZE := 96
 const WORKGROUP_SIZE := 8
@@ -254,7 +255,7 @@ func _initialize_resources(rendering_device: RenderingDevice) -> bool:
 	_samplers["repeat"] = _create_sampler(rendering_device, RenderingDevice.SAMPLER_FILTER_LINEAR, RenderingDevice.SAMPLER_REPEAT_MODE_REPEAT, true)
 	_ocean_buffer = rendering_device.storage_buffer_create(MAX_BODIES * OCEAN_FLOATS * 4)
 	_atmosphere_buffer = rendering_device.storage_buffer_create(MAX_BODIES * ATMOSPHERE_FLOATS * 4)
-	for entry in [["wave_a", OceanWaveATexture], ["wave_b", OceanWaveBTexture], ["foam", OceanFoamTexture], ["blue_noise", BlueNoiseTexture]]:
+	for entry in [["wave_a", OceanWaveATexture], ["wave_b", OceanWaveBTexture], ["foam", OceanFoamTexture], ["caustic", OceanCausticTexture], ["blue_noise", BlueNoiseTexture]]:
 		_static_textures[entry[0]] = RenderingServer.texture_get_rd_texture((entry[1] as Texture2D).get_rid())
 	_initialized = true
 	return true
@@ -292,6 +293,7 @@ func _refresh_uniform_sets(rendering_device: RenderingDevice, color: RID, depth:
 			_sampler_uniform(4, "repeat", _static_textures["wave_b"]),
 			_sampler_uniform(5, "repeat", _static_textures["foam"]),
 			_buffer_uniform(6, _ocean_buffer),
+			_sampler_uniform(7, "repeat", _static_textures["caustic"]),
 		], _shaders["ocean"], 0)
 		_uniform_sets["atmosphere_%d" % suffix] = rendering_device.uniform_set_create([
 			_sampler_uniform(0, "screen", source),
