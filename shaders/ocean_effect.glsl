@@ -214,30 +214,6 @@ void main() {
 	vec3 normal_a = triplanar_normal(intersection, sphere_normal, normal_scale, offset_a, normal_lod, wave_normal_a);
 	vec3 detail_normal = triplanar_normal(intersection, normal_a, normal_scale, offset_b, normal_lod, wave_normal_b);
 	vec3 wave_normal = normalize(mix(sphere_normal, detail_normal, clamp(wave_strength, 0.0, 1.0)));
-	float storm_foam = 0.0;
-	vec3 storm_churn = vec3(0.0);
-	for (int storm_index = 0; storm_index < 9; storm_index++) {
-		vec4 contact = body.storm_contacts[storm_index];
-		if (contact.w <= 0.0) {
-			continue;
-		}
-		vec3 contact_position = normalize(contact.xyz - planet_centre) * ocean_radius;
-		vec3 contact_delta = intersection - contact_position;
-		vec3 tangent_delta = contact_delta - sphere_normal * dot(contact_delta, sphere_normal);
-		float contact_distance = length(tangent_delta);
-		float contact_strength = 1.0 - smoothstep(contact.w * 0.16, contact.w, contact_distance);
-		if (contact_strength <= 0.0) {
-			continue;
-		}
-		vec3 radial_direction = tangent_delta / max(contact_distance, 0.001);
-		vec3 swirl_direction = normalize(cross(sphere_normal, radial_direction));
-		float pulse = sin(contact_distance * 1.65 - time * 6.8 + float(storm_index) * 2.1);
-		float core = 1.0 - smoothstep(0.0, contact.w * 0.38, contact_distance);
-		storm_churn += radial_direction * pulse * contact_strength * 0.34;
-		storm_churn += swirl_direction * contact_strength * (0.18 + core * 0.22);
-		storm_foam = max(storm_foam, contact_strength * (0.5 + pulse * 0.18));
-	}
-	wave_normal = normalize(wave_normal + storm_churn);
 	vec3 ray_right = normalize(ray_direction_x - ray_direction);
 	vec3 ray_up = normalize(ray_direction_y - ray_direction);
 	vec3 wave_delta = wave_normal - sphere_normal;
@@ -259,10 +235,8 @@ void main() {
 	float foam_lod = texture_lod(world_footprint, foam_scale / max(planet_scale, 0.00001), foam_texture);
 	float foam_noise = triplanar_foam(intersection / max(planet_scale, 0.00001), sphere_normal, foam_scale, offset_a * 0.35, foam_lod);
 	float leading_edge = smoothstep(0.02, 0.35, ocean_depth / max(foam_distance, 0.001));
-	float foam = shore * leading_edge * smoothstep(0.24, 0.78, 1.0 - foam_noise) * above_water;
+	float foam = shore * leading_edge * smoothstep(0.24, 0.78, 1.0 - foam_noise) * above_water * (1.0 - exterior_murk);
 	lit_ocean = mix(lit_ocean, foam_colour * (0.65 + 0.35 * diffuse_lighting), foam);
-	float storm_surface = storm_foam * smoothstep(0.12, 0.82, 1.0 - foam_noise) * above_water;
-	lit_ocean = mix(lit_ocean, mix(deep_colour, shallow_colour, 0.7), storm_surface * 0.34);
 	float wave_light = pow(max(dot(wave_normal, normalize(sun_direction)), 0.0), 6.0);
 	float wave_slope = smoothstep(0.04, 0.3, length(wave_delta));
 	float surface_relief = mix(0.58, 1.32, wave_light);
