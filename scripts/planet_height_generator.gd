@@ -15,6 +15,7 @@ const SHATTERED := 3
 const MOAT := 4
 const ASTEROID := 5
 const GLACIER := 6
+const MIRAGE := 7
 
 var _body_kind := EARTH
 var _profile := "earth"
@@ -72,8 +73,10 @@ func _init(body_kind: String, seed: int) -> void:
 	match body_kind:
 		"moon", "tumbling_bean", "watchful_eye":
 			_body_kind = MOON
-		"alien", "cyclops", "mirage":
+		"alien", "cyclops":
 			_body_kind = ALIEN
+		"mirage":
+			_body_kind = MIRAGE
 		"shattered", "icey_twin":
 			_body_kind = SHATTERED
 		"moat", "fiery_twin":
@@ -186,6 +189,8 @@ func sample_factor(direction: Vector3) -> float:
 			return _asteroid_factor(direction)
 		GLACIER:
 			return _glacier_factor(direction)
+		MIRAGE:
+			return _mirage_factor(direction)
 		_:
 			return _earth_factor(direction)
 
@@ -467,6 +472,22 @@ func _build_settings() -> void:
 		GLACIER:
 			_settings[0] = Vector4(8.0, 2.1, 0.55, 3.6)
 			_settings[1] = Vector4(1.8, 0.0, 0.0, 0.0)
+		MIRAGE:
+			# Wide basins carry the silhouette. Every layer uses a small offset:
+			# the relief is an order of magnitude taller than the other bodies,
+			# so it also magnifies the float32 error of the compute shader.
+			_set_simple_noise(0, random, 5, 0.55, 2.1, 0.6, 20.0, 0.0, Vector3.ZERO, 120.0)
+			# The ridge only breaks the plateau edges: given a bigger elevation it
+			# takes over the silhouette and the mesas turn into radial spikes.
+			_set_ridge_noise(6, random, 5, 0.5, 2.0, 1.0, 6.0, 1.6, 0.9, 0.0, 0.0, Vector3.ZERO, 120.0)
+			_set_simple_noise(3, random, 4, 0.5, 2.0, 0.8, 1.0, 0.0, Vector3.ZERO, 120.0)
+			_set_simple_noise(9, random, 4, 0.5, 0.2, 0.6, 1.0, 0.0, Vector3.ZERO, 120.0)
+			_settings[12] = Vector4(0.22, 0.10, 0.85, 0.0)
+			_settings[17] = Vector4(103.03, 0.0, 210.9, 0.0)
+			# A narrow mask makes the mesas appear in clear patches instead of
+			# being half faded everywhere.
+			_settings[18] = Vector4(5.0, 1.5, 0.3, 1.1)
+			_build_craters(12, Vector2(0.05, 0.3), 0.10, 1.4, Vector2(0.5, 1.4), 0.6, 0)
 	var values := PackedFloat32Array()
 	values.resize(_settings.size() * 4)
 	for index in _settings.size():
@@ -600,15 +621,19 @@ func _pack_vector4_array(values: Array[Vector4]) -> PackedByteArray:
 	return packed.to_byte_array()
 
 
-func _set_simple_noise(index: int, random: DotNetRandom, layers: int, persistence: float, lacunarity: float, scale: float, elevation: float, vertical_shift: float, configured_offset := Vector3.ZERO) -> void:
-	var offset := Vector3(random.value(), random.value(), random.value()) * random.value() * 10000.0 + configured_offset
+# offset_scale trades terrain variety for float32 headroom: the compute shader
+# evaluates the noise at position + offset, so a 10000-wide offset leaves only
+# three significant digits and the mesh drifts away from the float64
+# sample_factor that gravity and placement read.
+func _set_simple_noise(index: int, random: DotNetRandom, layers: int, persistence: float, lacunarity: float, scale: float, elevation: float, vertical_shift: float, configured_offset := Vector3.ZERO, offset_scale := 10000.0) -> void:
+	var offset := Vector3(random.value(), random.value(), random.value()) * random.value() * offset_scale + configured_offset
 	_settings[index] = Vector4(offset.x, offset.y, offset.z, layers)
 	_settings[index + 1] = Vector4(persistence, lacunarity, scale, elevation)
 	_settings[index + 2] = Vector4(vertical_shift, 0.0, 0.0, 0.0)
 
 
-func _set_ridge_noise(index: int, random: DotNetRandom, layers: int, persistence: float, lacunarity: float, scale: float, elevation: float, power: float, gain: float, vertical_shift: float, smoothing: float, configured_offset := Vector3.ZERO) -> void:
-	var offset := Vector3(random.value(), random.value(), random.value()) * random.value() * 10000.0 + configured_offset
+func _set_ridge_noise(index: int, random: DotNetRandom, layers: int, persistence: float, lacunarity: float, scale: float, elevation: float, power: float, gain: float, vertical_shift: float, smoothing: float, configured_offset := Vector3.ZERO, offset_scale := 10000.0) -> void:
+	var offset := Vector3(random.value(), random.value(), random.value()) * random.value() * offset_scale + configured_offset
 	_settings[index] = Vector4(offset.x, offset.y, offset.z, layers)
 	_settings[index + 1] = Vector4(persistence, lacunarity, scale, elevation)
 	_settings[index + 2] = Vector4(power, gain, vertical_shift, smoothing)
@@ -823,6 +848,34 @@ func _alien_factor(position: Vector3) -> float:
 	var ridge := _smoothed_ridge_noise(position + warp * parameters.y, 6)
 	var mask := _blend(0.0, config.w, _simple_noise(position + warp * parameters.z, 3))
 	return 1.0 + continent * 0.01 + ridge * 0.01 * mask + _crater_depth(position)
+
+
+# Mirrors terrace_elevation in planet_height.comp; the two must stay identical
+# or the collider disagrees with the mesh the player sees.
+func _terrace_elevation(elevation: float, terrace: Vector4) -> float:
+	var scaled := elevation * terrace.x
+	var level := floorf(scaled)
+	var t := scaled - level
+	var stepped := (level + smoothstep(0.5 - terrace.y, 0.5 + terrace.y, t)) / terrace.x
+	return lerpf(elevation, stepped, terrace.z)
+
+
+func _mirage_factor(position: Vector3) -> float:
+	var warp := Vector3(
+		_simple_noise(position, 9),
+		_simple_noise(position - Vector3.ONE * 100.0, 9),
+		_simple_noise(position + Vector3.ONE * 100.0, 9)
+	) * 0.01
+	var config := _settings[18]
+	var parameters := _settings[17]
+	var continent := _simple_noise(position + warp * parameters.x, 0)
+	continent = _smooth_max(continent, -config.y, config.z)
+	if continent < 0.0:
+		continent *= 1.0 + config.x
+	var ridge := _smoothed_ridge_noise(position + warp * parameters.y, 6)
+	var mask := _blend(0.0, config.w, _simple_noise(position + warp * parameters.z, 3))
+	var elevation := _terrace_elevation(continent + ridge * mask, _settings[12])
+	return 1.0 + elevation * 0.01 + _crater_depth(position)
 
 
 func _shattered_factor(position: Vector3) -> float:

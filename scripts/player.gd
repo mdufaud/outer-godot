@@ -13,7 +13,7 @@ const STICK_TO_GROUND_SPEED := 0.5
 const PLAYER_HALF_HEIGHT := 0.8
 const GROUND_COLLISION_MARGIN := 0.35
 const GROUND_SNAP_DISTANCE := 0.5
-const GROUND_PROBE_DISTANCE := 0.8
+const GROUND_PROBE_DISTANCE := 0.2
 const GROUND_LERP := 10.0
 const FLOOR_MAX_ANGLE := 65.0
 const MOUSE_SENS := 0.002
@@ -115,8 +115,9 @@ func _physics_process(delta: float) -> void:
 	if reference_source != null:
 		frame_position = reference_source.global_position
 	var relative_velocity := velocity - previous_frame_velocity
+	var vertical_speed := relative_velocity.dot(up_dir)
 	var grounded := is_on_floor()
-	if not grounded and surface_source != null and relative_velocity.dot(up_dir) <= JUMP_SPEED * 0.5:
+	if not grounded and surface_source != null and vertical_speed <= JUMP_SPEED * 0.5:
 		grounded = _ground_clearance(surface_source) <= GROUND_PROBE_DISTANCE
 	var water_depth := -INF
 	if reference_source != null and reference_source.has_method("get_water_depth"):
@@ -131,7 +132,7 @@ func _physics_process(delta: float) -> void:
 		var submerged := clampf((water_depth + PLAYER_HALF_HEIGHT) / (PLAYER_HALF_HEIGHT * 2.0), 0.0, 1.0)
 		relative_gravity *= 1.0 - submerged * WATER_BUOYANCY
 	elif grounded:
-		var v_vert := up_dir * maxf(relative_velocity.dot(up_dir), 0.0)
+		var v_vert := up_dir * relative_velocity.dot(up_dir)
 		var v_horiz := relative_velocity - v_vert
 		v_horiz = v_horiz.lerp(wish_dir * speed, clampf(GROUND_LERP * delta, 0.0, 1.0))
 		if Input.is_action_just_pressed("jump"):
@@ -154,7 +155,9 @@ func _physics_process(delta: float) -> void:
 	global_position += frame_offset
 	velocity = relative_velocity + relative_gravity * delta
 	move_and_slide()
-	if grounded and not swimming and not Input.is_action_just_pressed("jump"):
+	# Snap only keeps contact while walking on a moving body: never let it catch
+	# a fall, or the last centimeters feel magnetic.
+	if grounded and not swimming and absf(vertical_speed) < STICK_TO_GROUND_SPEED * 2.0 and not Input.is_action_just_pressed("jump"):
 		apply_floor_snap()
 	velocity += reference_velocity
 	_update_prompt()

@@ -88,6 +88,10 @@ func _boot() -> void:
 		comet_trail.target = spawned_bodies["Watchful Eye"]
 		comet_trail.sun = sun
 		add_child(comet_trail)
+	if spawned_bodies.has("Mirage"):
+		var mirage_ring := preload("res://scripts/asteroid_ring.gd").new()
+		mirage_ring.name = "MirageRing"
+		spawned_bodies["Mirage"].add_child(mirage_ring)
 	_log_boot("Waiting for %d bodies" % spawned_bodies.size())
 	if not await _wait_for_bodies(spawned_bodies.values()):
 		return

@@ -28,7 +28,7 @@ static func get_body_definitions() -> Array[Dictionary]:
 			"position": Vector3(0.0, 0.0, -1487.5),
 			"data": {
 				"body_kind": "mirage", "surface_style": "terrain", "radius": 34.0, "gravity": 7.0,
-				"seed": 4711, "ocean": false, "perturb_strength": 0.08,
+				"seed": 4711, "ocean": false, "perturb_strength": 0.03,
 				"atmosphere": true, "atmosphere_scale": 0.42, "atmosphere_density_falloff": 3.2,
 				"atmosphere_wavelengths": Vector3(460.0, 540.0, 700.0),
 				"atmosphere_scattering_strength": 24.0, "atmosphere_intensity": 0.3,

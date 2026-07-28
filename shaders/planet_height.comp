@@ -227,6 +227,36 @@ float alien_height(vec3 position) {
 	return 1.0 + continent * 0.01 + ridge * 0.01 * mask + crater_depth(position);
 }
 
+// Quantises the elevation into terraces: the lower half of each band is a flat
+// plateau, the upper half a wall. A small sharpness makes that wall vertical,
+// which is what reads as a canyon rim instead of a rounded ridge.
+float terrace_elevation(float elevation, vec4 terrace) {
+	float scaled = elevation * terrace.x;
+	float level = floor(scaled);
+	float t = scaled - level;
+	float stepped = (level + smoothstep(0.5 - terrace.y, 0.5 + terrace.y, t)) / terrace.x;
+	return mix(elevation, stepped, terrace.z);
+}
+
+float mirage_height(vec3 position) {
+	vec3 warp = vec3(
+		simple_noise(position, 9),
+		simple_noise(position - 100.0, 9),
+		simple_noise(position + 100.0, 9)
+	) * 0.01;
+	vec4 config = settings.values[18];
+	vec4 profile = settings.values[17];
+	float continent = simple_noise(position + warp * profile.x, 0);
+	continent = smooth_maximum(continent, -config.y, config.z);
+	if (continent < 0.0) {
+		continent *= 1.0 + config.x;
+	}
+	float ridge = smoothed_ridge_noise(position + warp * profile.y, 6);
+	float mask = smoothstep(-config.w * 0.5, config.w * 0.5, simple_noise(position + warp * profile.z, 3));
+	float elevation = terrace_elevation(continent + ridge * mask, settings.values[12]);
+	return 1.0 + elevation * 0.01 + crater_depth(position);
+}
+
 float shattered_height(vec3 position) {
 	vec3 warp = vec3(
 		simple_noise(position, 9),
@@ -309,6 +339,9 @@ void main() {
 			break;
 		case 6:
 			heights.values[index] = glacier_height(position);
+			break;
+		case 7:
+			heights.values[index] = mirage_height(position);
 			break;
 		default:
 			heights.values[index] = earth_height(position);
