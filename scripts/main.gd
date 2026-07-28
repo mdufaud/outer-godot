@@ -10,6 +10,7 @@ const BonificationMathScript := preload("res://scripts/bonification_math.gd")
 const SolarSystemContentScript := preload("res://scripts/solar_system_content.gd")
 const FloatingOriginScript := preload("res://scripts/floating_origin.gd")
 const PlanetEffectsScript := preload("res://scripts/planet_effects.gd")
+const SunFXScript := preload("res://scripts/sun_fx.gd")
 
 const SUN_RADIUS := 345.0
 const SUN_SURFACE_GRAVITY := 50.0
@@ -467,6 +468,8 @@ func _build_environment() -> void:
 	var sky := Sky.new()
 	_sky_material = ShaderMaterial.new()
 	_sky_material.shader = preload("res://shaders/stars.gdshader")
+	_sky_material.set_shader_parameter("sun_glow_enabled", SunFXScript.DISTANT_GLOW)
+	_sky_material.set_shader_parameter("sun_pulse_enabled", SunFXScript.PULSE)
 	sky.sky_material = _sky_material
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky

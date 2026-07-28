@@ -6,6 +6,7 @@ uniform vec3 body_color: source_color = vec3(1.0, 0.46, 0.07);
 uniform vec3 hot_color: source_color = vec3(1.0, 0.86, 0.46);
 uniform vec3 spot_color: source_color = vec3(0.55, 0.10, 0.02);
 uniform float emission_strength: hint_range(1.0, 20.0) = 9.0;
+uniform bool pulse_enabled = true;
 
 varying vec3 v_pos;
 
@@ -64,7 +65,8 @@ void fragment() {
 	color = mix(color, spot_color, spots * 0.7);
 	float cells = smoothstep(0.44, 0.86, heat);
 	color = mix(color, hot_color, cells * (0.3 + 0.5 * limb));
-	float energy = emission_strength * mix(0.5, 1.7, heat) * mix(0.45, 1.0, limb) * (1.0 - spots * 0.65);
+	float pulse = pulse_enabled ? 0.86 + 0.14 * sin(TIME * 0.62) : 1.0;
+	float energy = emission_strength * pulse * mix(0.5, 1.7, heat) * mix(0.45, 1.0, limb) * (1.0 - spots * 0.65);
 	ALBEDO = color;
 	EMISSION = color * energy;
 }

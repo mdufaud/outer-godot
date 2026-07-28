@@ -6,6 +6,10 @@ uniform float daylight = 0.0;
 uniform float underwater_strength = 0.0;
 uniform int ocean_count = 0;
 uniform vec4 ocean_spheres[8];
+uniform bool sun_glow_enabled = true;
+uniform bool sun_pulse_enabled = true;
+uniform vec3 sun_glow_color: source_color = vec3(1.0, 0.45, 0.12);
+uniform vec3 sun_glow_outer_color: source_color = vec3(0.62, 0.10, 0.34);
 
 bool ray_hits_sphere(vec3 origin, vec3 direction, vec4 sphere) {
 	vec3 offset = origin - sphere.xyz;
@@ -95,6 +99,15 @@ void sky() {
 	float sun_fade = 1.0 - smoothstep(0.65, 0.995, dot(dir, normalize(sun_direction)));
 	stars *= ocean_mask * sun_fade * (1.0 - daylight * 0.96) * (1.0 - underwater_strength);
 	col += stars;
+
+	if (sun_glow_enabled) {
+		float sun_dot = max(dot(dir, normalize(sun_direction)), 0.0);
+		float pulse = sun_pulse_enabled ? 0.86 + 0.14 * sin(TIME * 0.62) : 1.0;
+		vec3 glow = sun_glow_color * pow(sun_dot, 260.0) * 2.4
+			+ sun_glow_color * pow(sun_dot, 42.0) * 0.30
+			+ sun_glow_outer_color * pow(sun_dot, 9.0) * 0.05;
+		col += glow * pulse * ocean_mask * (1.0 - underwater_strength);
+	}
 
 	COLOR = col;
 }

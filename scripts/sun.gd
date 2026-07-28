@@ -1,5 +1,7 @@
 extends Node3D
 
+const SunFXScript := preload("res://scripts/sun_fx.gd")
+
 @export var radius := 120.0
 @export var surface_gravity := 0.2
 @export var death_radius := 180.0
@@ -19,6 +21,7 @@ func _ready() -> void:
 	sphere.rings = 48
 	var mat := ShaderMaterial.new()
 	mat.shader = preload("res://shaders/sun.gdshader")
+	mat.set_shader_parameter("pulse_enabled", SunFXScript.PULSE)
 	sphere.material = mat
 	mesh.mesh = sphere
 	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -32,6 +35,11 @@ func _ready() -> void:
 	corona_mat.shader = preload("res://shaders/corona.gdshader")
 	corona_mat.render_priority = 10
 	corona_mat.set_shader_parameter("disk_radius", 1.0 / corona_scale)
+	corona_mat.set_shader_parameter("pulse_enabled", SunFXScript.PULSE)
+	corona_mat.set_shader_parameter("god_rays_enabled", SunFXScript.GOD_RAYS)
+	corona_mat.set_shader_parameter("prominences_enabled", SunFXScript.PROMINENCES)
+	corona_mat.set_shader_parameter("chromatic_band_enabled", SunFXScript.CHROMATIC_BAND)
+	corona_mat.set_shader_parameter("embers_enabled", SunFXScript.EMBERS)
 	corona_quad.material = corona_mat
 	corona.mesh = corona_quad
 	corona.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
