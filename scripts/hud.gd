@@ -264,10 +264,10 @@ func layout_panels() -> void:
 	if navigation_overlay != null:
 		navigation_overlay.size = teleport_root.size
 	var viewport_size := teleport_root.size
+	var margin := 16.0 * ui_scale
 	if globe != null:
 		globe.size = Vector2(180.0, 190.0) * ui_scale
-		globe.position = Vector2((viewport_size.x - globe.size.x) * 0.5, 24.0 * ui_scale)
-	var margin := 16.0 * ui_scale
+		globe.position = Vector2(margin, viewport_size.y - globe.size.y - margin)
 	var width := clampf(viewport_size.x * 0.22, 236.0 * ui_scale, 286.0 * ui_scale)
 	width = minf(width, maxf(216.0, viewport_size.x - margin * 2.0))
 	teleport_panel.anchor_left = 1.0
