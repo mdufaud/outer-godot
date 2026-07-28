@@ -219,13 +219,13 @@ func _update_environment_feedback(delta: float, camera: Camera3D) -> void:
 	var water_depth := float(source.get_water_depth(camera.global_position)) if source != null and source.has_method("get_water_depth") else -INF
 	var distance_to_surface := absf(water_depth) if is_finite(water_depth) else INF
 	var ocean_target := 0.0
-	if source != null and bool(source.get("has_ocean")):
+	if source != null and source.get("has_ocean") == true:
 		ocean_target = clampf(1.0 - distance_to_surface / 18.0, 0.0, 1.0)
 		if water_depth > 0.0:
 			ocean_target = maxf(ocean_target, 0.45)
 	var in_atmosphere := false
 	var wind_target := 0.0
-	if source != null and bool(source.get("has_atmosphere")):
+	if source != null and source.get("has_atmosphere") == true:
 		var atmosphere_radius := float(source.get("radius")) * (1.0 + float(source.get("atmosphere_scale")))
 		var distance_to_center := camera.global_position.distance_to(source.global_position)
 		in_atmosphere = atmosphere_contains(camera.global_position, source.global_position, float(source.get("radius")), float(source.get("atmosphere_scale")))
@@ -304,7 +304,7 @@ func _update_sky(camera: Camera3D) -> void:
 	_sky_material.set_shader_parameter("underwater_strength", sky_occlusion)
 	var spheres := PackedVector4Array()
 	for body in get_tree().get_nodes_in_group("celestial_body"):
-		if body != sun and bool(body.get("has_ocean")) and spheres.size() < 8:
+		if body != sun and body.get("has_ocean") == true and spheres.size() < 8:
 			spheres.append(Vector4(body.global_position.x, body.global_position.y, body.global_position.z, float(body.get("radius")) + float(body.get("ocean_level"))))
 	_sky_material.set_shader_parameter("ocean_count", spheres.size())
 	_sky_material.set_shader_parameter("ocean_spheres", spheres)
@@ -312,7 +312,7 @@ func _update_sky(camera: Camera3D) -> void:
 	if source != null and source != sun:
 		var local_up := (camera.global_position - source.global_position).normalized()
 		var local_sun := (sun.global_position - source.global_position).normalized()
-		var atmosphere_limit := float(source.get("radius")) * (1.0 + float(source.get("atmosphere_scale"))) if bool(source.get("has_atmosphere")) else float(source.get("radius")) * 1.05
+		var atmosphere_limit := float(source.get("radius")) * (1.0 + float(source.get("atmosphere_scale"))) if source.get("has_atmosphere") == true else float(source.get("radius")) * 1.05
 		if camera.global_position.distance_to(source.global_position) < atmosphere_limit:
 			daylight = smoothstep(-0.08, 0.25, local_up.dot(local_sun))
 	_sky_material.set_shader_parameter("daylight", daylight * (1.0 - sky_occlusion))
@@ -491,6 +491,7 @@ func _build_environment() -> void:
 	world_env.compositor = compositor
 	add_child(world_env)
 	sun_light = DirectionalLight3D.new()
+	sun_light.light_color = Color(1.0, 0.84, 0.64)
 	sun_light.light_energy = 1.2
 	sun_light.shadow_enabled = true
 	sun_light.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS

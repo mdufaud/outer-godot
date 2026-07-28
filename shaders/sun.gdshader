@@ -1,10 +1,11 @@
 shader_type spatial;
 render_mode unshaded, shadows_disabled;
 
-uniform vec3 edge_color: source_color = vec3(1.0, 0.58, 0.08);
-uniform vec3 body_color: source_color = vec3(1.0, 0.88, 0.42);
-uniform vec3 hot_color: source_color = vec3(1.0, 0.99, 0.9);
-uniform float emission_strength: hint_range(1.0, 20.0) = 14.0;
+uniform vec3 edge_color: source_color = vec3(0.92, 0.20, 0.03);
+uniform vec3 body_color: source_color = vec3(1.0, 0.46, 0.07);
+uniform vec3 hot_color: source_color = vec3(1.0, 0.86, 0.46);
+uniform vec3 spot_color: source_color = vec3(0.55, 0.10, 0.02);
+uniform float emission_strength: hint_range(1.0, 20.0) = 9.0;
 
 varying vec3 v_pos;
 
@@ -57,10 +58,13 @@ void fragment() {
 	float filaments = fbm(direction * 32.0 - flow_a * 1.7 + convection * 1.4);
 	float heat = clamp(broad * 0.35 + convection * 0.45 + filaments * 0.35, 0.0, 1.0);
 	float facing = clamp(dot(normalize(NORMAL), VIEW), 0.0, 1.0);
-	float limb = pow(facing, 0.2);
-	vec3 color = mix(edge_color, body_color, 0.72 + 0.28 * limb);
-	color = mix(color, hot_color, 0.78 + heat * 0.16);
-	float energy = emission_strength * mix(0.94, 1.06, heat) * mix(0.94, 1.0, limb);
+	float limb = pow(facing, 0.55);
+	vec3 color = mix(edge_color, body_color, limb);
+	float spots = smoothstep(0.58, 0.26, broad) * smoothstep(0.55, 0.3, convection);
+	color = mix(color, spot_color, spots * 0.7);
+	float cells = smoothstep(0.44, 0.86, heat);
+	color = mix(color, hot_color, cells * (0.3 + 0.5 * limb));
+	float energy = emission_strength * mix(0.5, 1.7, heat) * mix(0.45, 1.0, limb) * (1.0 - spots * 0.65);
 	ALBEDO = color;
 	EMISSION = color * energy;
 }

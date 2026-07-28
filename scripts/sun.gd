@@ -26,14 +26,16 @@ func _ready() -> void:
 
 	var corona := MeshInstance3D.new()
 	var corona_quad := QuadMesh.new()
-	corona_quad.size = Vector2.ONE * radius * 3.4
+	var corona_scale := 4.0
+	corona_quad.size = Vector2.ONE * radius * 2.0 * corona_scale
 	var corona_mat := ShaderMaterial.new()
 	corona_mat.shader = preload("res://shaders/corona.gdshader")
 	corona_mat.render_priority = 10
+	corona_mat.set_shader_parameter("disk_radius", 1.0 / corona_scale)
 	corona_quad.material = corona_mat
 	corona.mesh = corona_quad
 	corona.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	corona.extra_cull_margin = radius * 2.0
+	corona.extra_cull_margin = radius * corona_scale
 	add_child(corona)
 
 	var death_zone := Area3D.new()
