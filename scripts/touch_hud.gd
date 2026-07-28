@@ -68,11 +68,13 @@ func _rebuild() -> void:
 		_add_btn("Roll L", "roll_left", Callable(), 2, 1)
 		_add_btn("Exit", "", _exit_ship, 1, 1)
 		_add_btn("R", "", _respawn, 0, 2)
+		_add_btn("Map", "", _toggle_map, 1, 2)
 	else:
 		_add_btn("Jump", "jump", Callable(), 0, 0)
 		_add_btn("Sprint", "sprint", Callable(), 0, 1)
 		_add_btn("E", "", _interact, 1, 0)
 		_add_btn("R", "", _respawn, 1, 1)
+		_add_btn("Map", "", _toggle_map, 1, 2)
 	_notify_hud_layout()
 	queue_redraw()
 
@@ -223,6 +225,12 @@ func _respawn() -> void:
 	main.respawn()
 
 
+func _toggle_map() -> void:
+	var hud := get_tree().get_first_node_in_group("hud")
+	if hud != null:
+		hud.planet_markers_visible = not hud.planet_markers_visible
+
+
 func _draw() -> void:
 	var radius := JOY_RADIUS * _scale
 	var knob := KNOB_RADIUS * _scale
@@ -277,6 +285,8 @@ func _button_icon(label: String) -> String:
 			return "↶"
 		"Exit":
 			return "×"
+		"Map":
+			return "◍"
 	return "•"
 
 
@@ -298,6 +308,8 @@ func _button_accent(label: String) -> Color:
 		return Color(1.0, 0.56, 0.36)
 	if label in ["R", "Roll R", "Roll L"]:
 		return Color(1.0, 0.78, 0.36)
+	if label == "Map":
+		return Color(0.65, 0.85, 1.0)
 	return Color(0.65, 0.78, 1.0)
 
 

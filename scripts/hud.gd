@@ -1,6 +1,7 @@
 extends CanvasLayer
 
 const BonificationMathScript := preload("res://scripts/bonification_math.gd")
+const HudGlobeScript := preload("res://scripts/hud_globe.gd")
 
 class NavigationOverlay extends Control:
 	var hud: CanvasLayer
@@ -28,6 +29,7 @@ var debug_buttons: Array[Button] = []
 var gravity_button: Button
 var orbit_button: Button
 var navigation_overlay: NavigationOverlay
+var globe: Control
 var planet_markers_visible := false
 var celestial_bodies: Array[Node3D] = []
 var gravity_debug_visible := false
@@ -37,8 +39,8 @@ var locked_body: Node3D
 var aimed_body: Node3D
 var ui_scale := 1.0
 
-const HINT_FOOT := "WASD walk · Space jump/jetpack in air · Shift sprint/descend · X brake · E interact · Tab markers · R respawn"
-const HINT_SHIP := "WASD thrust · Space/Shift up/down · Mouse steer · LMB lock · Z/C roll · X brake · Tab markers · E exit"
+const HINT_FOOT := "WASD walk · Space jump/jetpack in air · Shift sprint/descend · X brake · E interact · Tab map · R respawn"
+const HINT_SHIP := "WASD thrust · Space/Shift up/down · Mouse steer · LMB lock · Z/C roll · X brake · Tab map · E exit"
 const MARKER_MARGIN := 42.0
 const SHIP_COLOR := Color(0.35, 0.85, 1.0, 0.9)
 const PLANET_COLOR := Color(1.0, 0.82, 0.42, 0.82)
@@ -65,6 +67,7 @@ func _ready() -> void:
 		if body is Node3D:
 			celestial_bodies.append(body)
 	_build_navigation_overlay()
+	_build_globe()
 
 	var crosshair := Label.new()
 	crosshair.text = "+"
@@ -114,6 +117,14 @@ func _build_navigation_overlay() -> void:
 	navigation_overlay.position = Vector2.ZERO
 	navigation_overlay.size = get_viewport().get_visible_rect().size
 	add_child(navigation_overlay)
+
+
+func _build_globe() -> void:
+	globe = HudGlobeScript.new()
+	globe.name = "HudGlobe"
+	globe.hud = self
+	globe.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(globe)
 
 
 func _build_teleport_menu() -> void:
@@ -253,6 +264,9 @@ func layout_panels() -> void:
 	if navigation_overlay != null:
 		navigation_overlay.size = teleport_root.size
 	var viewport_size := teleport_root.size
+	if globe != null:
+		globe.size = Vector2(180.0, 190.0) * ui_scale
+		globe.position = Vector2((viewport_size.x - globe.size.x) * 0.5, 24.0 * ui_scale)
 	var margin := 16.0 * ui_scale
 	var width := clampf(viewport_size.x * 0.22, 236.0 * ui_scale, 286.0 * ui_scale)
 	width = minf(width, maxf(216.0, viewport_size.x - margin * 2.0))
