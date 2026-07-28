@@ -22,6 +22,7 @@ struct OceanBody {
 	vec4 wave;
 	vec4 foam;
 	vec4 underwater;
+	vec4 storm_contacts[9];
 };
 
 layout(std430, set = 0, binding = 6) restrict readonly buffer OceanBuffer {
@@ -122,6 +123,21 @@ float texture_lod(float world_footprint, float coordinate_scale, sampler2D sampl
 	return clamp(log2(max(texel_footprint, 1.0)), 0.0, maximum_lod);
 }
 
+vec3 sample_blurred_scene(vec2 uv, vec2 pixel_size, float radius) {
+	vec2 horizontal = vec2(pixel_size.x * radius, 0.0);
+	vec2 vertical = vec2(0.0, pixel_size.y * radius);
+	vec3 colour = texture(source_color, uv).rgb * 0.2;
+	colour += texture(source_color, clamp(uv + horizontal, vec2(0.001), vec2(0.999))).rgb * 0.12;
+	colour += texture(source_color, clamp(uv - horizontal, vec2(0.001), vec2(0.999))).rgb * 0.12;
+	colour += texture(source_color, clamp(uv + vertical, vec2(0.001), vec2(0.999))).rgb * 0.12;
+	colour += texture(source_color, clamp(uv - vertical, vec2(0.001), vec2(0.999))).rgb * 0.12;
+	colour += texture(source_color, clamp(uv + horizontal + vertical, vec2(0.001), vec2(0.999))).rgb * 0.08;
+	colour += texture(source_color, clamp(uv + horizontal - vertical, vec2(0.001), vec2(0.999))).rgb * 0.08;
+	colour += texture(source_color, clamp(uv - horizontal + vertical, vec2(0.001), vec2(0.999))).rgb * 0.08;
+	colour += texture(source_color, clamp(uv - horizontal - vertical, vec2(0.001), vec2(0.999))).rgb * 0.08;
+	return colour;
+}
+
 void main() {
 	ivec2 coordinate = ivec2(gl_GlobalInvocationID.xy);
 	ivec2 size = params.screen.xy;
@@ -152,6 +168,7 @@ void main() {
 	float refraction_strength = body.wave.w;
 	float foam_scale = body.foam.x;
 	float foam_distance = body.foam.y;
+	float exterior_murk = body.foam.z;
 	vec3 underwater_tint = body.underwater.rgb;
 	float underwater_darkness = body.underwater.w;
 	float time = params.camera_position.w;
@@ -197,6 +214,30 @@ void main() {
 	vec3 normal_a = triplanar_normal(intersection, sphere_normal, normal_scale, offset_a, normal_lod, wave_normal_a);
 	vec3 detail_normal = triplanar_normal(intersection, normal_a, normal_scale, offset_b, normal_lod, wave_normal_b);
 	vec3 wave_normal = normalize(mix(sphere_normal, detail_normal, clamp(wave_strength, 0.0, 1.0)));
+	float storm_foam = 0.0;
+	vec3 storm_churn = vec3(0.0);
+	for (int storm_index = 0; storm_index < 9; storm_index++) {
+		vec4 contact = body.storm_contacts[storm_index];
+		if (contact.w <= 0.0) {
+			continue;
+		}
+		vec3 contact_position = normalize(contact.xyz - planet_centre) * ocean_radius;
+		vec3 contact_delta = intersection - contact_position;
+		vec3 tangent_delta = contact_delta - sphere_normal * dot(contact_delta, sphere_normal);
+		float contact_distance = length(tangent_delta);
+		float contact_strength = 1.0 - smoothstep(contact.w * 0.16, contact.w, contact_distance);
+		if (contact_strength <= 0.0) {
+			continue;
+		}
+		vec3 radial_direction = tangent_delta / max(contact_distance, 0.001);
+		vec3 swirl_direction = normalize(cross(sphere_normal, radial_direction));
+		float pulse = sin(contact_distance * 1.65 - time * 6.8 + float(storm_index) * 2.1);
+		float core = 1.0 - smoothstep(0.0, contact.w * 0.38, contact_distance);
+		storm_churn += radial_direction * pulse * contact_strength * 0.34;
+		storm_churn += swirl_direction * contact_strength * (0.18 + core * 0.22);
+		storm_foam = max(storm_foam, contact_strength * (0.5 + pulse * 0.18));
+	}
+	wave_normal = normalize(wave_normal + storm_churn);
 	vec3 ray_right = normalize(ray_direction_x - ray_direction);
 	vec3 ray_up = normalize(ray_direction_y - ray_direction);
 	vec3 wave_delta = wave_normal - sphere_normal;
@@ -220,13 +261,38 @@ void main() {
 	float leading_edge = smoothstep(0.02, 0.35, ocean_depth / max(foam_distance, 0.001));
 	float foam = shore * leading_edge * smoothstep(0.24, 0.78, 1.0 - foam_noise) * above_water;
 	lit_ocean = mix(lit_ocean, foam_colour * (0.65 + 0.35 * diffuse_lighting), foam);
+	float storm_surface = storm_foam * smoothstep(0.12, 0.82, 1.0 - foam_noise) * above_water;
+	lit_ocean = mix(lit_ocean, mix(deep_colour, shallow_colour, 0.7), storm_surface * 0.34);
+	float wave_light = pow(max(dot(wave_normal, normalize(sun_direction)), 0.0), 6.0);
+	float wave_slope = smoothstep(0.04, 0.3, length(wave_delta));
+	float surface_relief = mix(0.58, 1.32, wave_light);
+	lit_ocean *= mix(1.0, surface_relief, exterior_murk * above_water * 0.72);
+	lit_ocean += shallow_colour * wave_slope * wave_light * exterior_murk * above_water * 0.28;
 	float refraction_fade = shore * (1.0 - smoothstep(0.0, planet_scale * 4.0, surface_distance)) * above_water;
 	vec2 refraction_uv = clamp(screen_uv + wave_normal.xy * refraction_strength * refraction_fade, vec2(0.001), vec2(0.999));
 	if (scene_distance(refraction_uv) < hit.x) {
 		refraction_uv = screen_uv;
 	}
 	vec3 refracted_scene = texture(source_color, refraction_uv).rgb;
+	float exterior_depth = 1.0 - exp(-ocean_depth / max(planet_scale * 0.12, 1.0));
+	float murk = exterior_murk * exterior_depth * above_water;
+	if (murk > 0.001) {
+		refraction_uv = clamp(
+			refraction_uv + underwater_offset * refraction_strength * 5.0 * murk,
+			vec2(0.001), vec2(0.999)
+		);
+		vec3 blurred_scene = sample_blurred_scene(refraction_uv, pixel_size, 1.5 + 18.5 * murk);
+		refracted_scene = mix(refracted_scene, blurred_scene, murk);
+		refracted_scene = min(refracted_scene, vec3(mix(1.25, 0.16, murk)));
+		float exterior_tint_peak = max(max(underwater_tint.r, underwater_tint.g), underwater_tint.b);
+		vec3 exterior_tint = underwater_tint / max(exterior_tint_peak, 0.001);
+		refracted_scene *= mix(vec3(1.0), exterior_tint * 0.62, murk * 0.72);
+	}
 	vec3 surface_colour = mix(refracted_scene, lit_ocean, alpha);
+	float murk_pattern = smoothstep(0.18, 0.82, foam_noise);
+	float murk_contrast = mix(0.52, 1.28, murk_pattern);
+	surface_colour *= mix(1.0, murk_contrast, murk * 0.72);
+	surface_colour += shallow_colour * smoothstep(0.68, 0.92, foam_noise) * murk * 0.16;
 
 	float underwater_amount = 1.0 - above_water;
 	float underwater_refraction = refraction_strength * 0.7 * (1.0 - exp(-ocean_depth / max(planet_scale * 0.08, 0.5)));

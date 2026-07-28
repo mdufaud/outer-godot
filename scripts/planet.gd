@@ -15,6 +15,8 @@ const BlueNoiseTexture := preload("res://assets/planet_textures/blue_noise.png")
 const MESH_CACHE_VERSION := 15
 const WATCHFUL_EYE_DIRECTION := Vector3(0.0, 0.18, 1.0)
 const OCEAN_FOAM_COLOR := Color(0.92, 0.98, 1.0)
+const TORNADO_COUNT := 14
+const STORM_CONTACT_COUNT := 9
 const ATMOSPHERE_DITHER_STRENGTH := 0.3
 const ATMOSPHERE_DITHER_SCALE := 3.89
 const ATMOSPHERE_SCATTERING_POINTS := 10
@@ -74,7 +76,10 @@ var _height_generator: RefCounted
 var _height_generator_initialized := false
 var _storm_interior: Node3D
 var _storm_orbits: Array[Node3D] = []
+var _storm_rigs: Array[Skeleton3D] = []
+var _storm_contacts: Array[Area3D] = []
 var _storm_shell_radius := 0.0
+var _storm_elapsed := 0.0
 var _lod_resolutions: Array[int] = []
 var _active_lod := -1
 var _terrain_height_minmax := Vector2.ONE
@@ -430,9 +435,9 @@ func _build_ocean() -> void:
 	var ambient_strength := 0.0
 	var sky_diffusion := 0.0
 	if body_kind == "cyclops":
-		ambient_color = Color(0.08, 0.3, 0.29)
+		ambient_color = Color(0.02, 0.08, 0.075)
 		ambient_strength = 0.24
-		sky_diffusion = 0.22
+		sky_diffusion = 0.34
 	_ocean_params = PackedFloat32Array([
 		global_position.x, global_position.y, global_position.z, get_ocean_effect_radius(),
 		0.0, 1.0, 0.0, radius,
@@ -442,9 +447,11 @@ func _build_ocean() -> void:
 		ambient_color.r, ambient_color.g, ambient_color.b, ambient_strength,
 		OCEAN_FOAM_COLOR.r, OCEAN_FOAM_COLOR.g, OCEAN_FOAM_COLOR.b, sky_diffusion,
 		ocean_wave_strength, ocean_wave_scale, ocean_wave_speed, refraction_strength,
-		ocean_foam_scale, foam_distance, 0.0, 0.0,
+		ocean_foam_scale, foam_distance, 1.0 if body_kind == "cyclops" else 0.0, 0.0,
 		underwater_tint.r, underwater_tint.g, underwater_tint.b, underwater_darkness,
 	])
+	for index in STORM_CONTACT_COUNT:
+		_ocean_params.append_array(PackedFloat32Array([0.0, 0.0, 0.0, 0.0]))
 
 
 func _build_atmosphere() -> void:
@@ -490,7 +497,7 @@ func _build_storm_system() -> void:
 	var cloud_shell := MeshInstance3D.new()
 	cloud_shell.name = "StormCloudShell"
 	var cloud_mesh := SphereMesh.new()
-	_storm_shell_radius = radius + ocean_level + 38.0
+	_storm_shell_radius = radius + ocean_level + 46.0
 	cloud_mesh.radius = _storm_shell_radius
 	cloud_mesh.height = cloud_mesh.radius * 2.0
 	cloud_mesh.radial_segments = 96
@@ -511,7 +518,7 @@ func _build_storm_interior() -> void:
 	add_child(_storm_interior)
 	var storm_rng := RandomNumberGenerator.new()
 	storm_rng.seed = rng_seed * 3571 + 91
-	for index in 6:
+	for index in TORNADO_COUNT:
 		var orbit := Node3D.new()
 		orbit.name = "TornadoOrbit%d" % index
 		orbit.rotation = Vector3(
@@ -521,49 +528,121 @@ func _build_storm_interior() -> void:
 		)
 		orbit.set_meta("speed", storm_rng.randf_range(0.035, 0.085) * (-1.0 if index % 2 else 1.0))
 		_storm_interior.add_child(orbit)
-		var funnel_height := storm_rng.randf_range(34.0, 37.5)
+		var funnel_height := storm_rng.randf_range(41.0, 45.0)
 		var funnel_root := Node3D.new()
 		funnel_root.name = "Tornado"
 		funnel_root.position = Vector3(radius + ocean_level + funnel_height * 0.5, 0.0, 0.0)
 		funnel_root.rotation_degrees.z = -90.0
 		orbit.add_child(funnel_root)
 		var base_phase := storm_rng.randf_range(0.0, TAU)
+		var base_radius := storm_rng.randf_range(3.5, 4.8)
+		var trunk_radius := storm_rng.randf_range(6.8, 8.4)
+		var crown_radius := storm_rng.randf_range(17.0, 21.0)
+		var skeleton := Skeleton3D.new()
+		skeleton.name = "TornadoRig"
+		skeleton.set_meta("phase", base_phase)
+		for bone_index in 3:
+			skeleton.add_bone(["Lower", "Middle", "Crown"][bone_index])
+			var bone_height := lerpf(-funnel_height * 0.5, funnel_height * 0.5, float(bone_index) * 0.5)
+			skeleton.set_bone_rest(bone_index, Transform3D(Basis.IDENTITY, Vector3(0.0, bone_height, 0.0)))
+		funnel_root.add_child(skeleton)
+		var funnel_mesh := _build_tornado_mesh(funnel_height, base_radius, trunk_radius, crown_radius, base_phase)
+		var skin := skeleton.create_skin_from_rest_transforms()
 		for layer in 3:
 			var funnel := MeshInstance3D.new()
-			funnel.name = "CloudLayer%d" % layer
-			var funnel_mesh := CylinderMesh.new()
-			funnel_mesh.height = funnel_height * (1.0 - float(layer) * 0.035)
-			funnel_mesh.bottom_radius = storm_rng.randf_range(0.7, 1.15) * (1.0 + float(layer) * 0.28)
-			funnel_mesh.top_radius = storm_rng.randf_range(7.2, 10.8) * (1.0 + float(layer) * 0.18)
-			funnel_mesh.radial_segments = 48
-			funnel_mesh.rings = 24
+			funnel.name = ["DenseCore", "ChurningMist", "OuterVapour"][layer]
 			var funnel_material := ShaderMaterial.new()
 			funnel_material.shader = load("res://shaders/tornado_funnel.gdshader")
-			funnel_material.set_shader_parameter("phase", base_phase + float(layer) * 2.1)
-			funnel_material.set_shader_parameter("layer_offset", float(layer) * 0.37)
-			funnel_material.set_shader_parameter("opacity", 0.48 - float(layer) * 0.09)
+			funnel_material.set_shader_parameter("phase", base_phase + float(layer) * 1.93)
+			funnel_material.set_shader_parameter("layer_offset", float(layer) * 0.72)
+			funnel_material.set_shader_parameter("radial_scale", 1.0 + float(layer) * 0.1)
+			funnel_material.set_shader_parameter("opacity", [0.96, 0.5, 0.26][layer])
 			funnel.mesh = funnel_mesh
+			funnel.skin = skin
+			funnel.skeleton = NodePath("..")
 			funnel.material_override = funnel_material
+			funnel.custom_aabb = AABB(
+				Vector3(-crown_radius * 1.5, -funnel_height * 0.6, -crown_radius * 1.5),
+				Vector3(crown_radius * 3.0, funnel_height * 1.2, crown_radius * 3.0)
+			)
 			funnel.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			funnel_root.add_child(funnel)
-		for ring_index in 3:
-			var spray := MeshInstance3D.new()
-			spray.name = "SprayRing%d" % ring_index
-			var spray_mesh := TorusMesh.new()
-			spray_mesh.inner_radius = 1.5 + float(ring_index) * 1.35
-			spray_mesh.outer_radius = spray_mesh.inner_radius + 0.65
-			spray_mesh.rings = 48
-			spray_mesh.ring_segments = 12
-			var spray_material := ShaderMaterial.new()
-			spray_material.shader = load("res://shaders/storm_spray.gdshader")
-			spray_material.set_shader_parameter("phase", base_phase + float(ring_index) * 1.7)
-			spray.mesh = spray_mesh
-			spray.material_override = spray_material
-			spray.position.y = -funnel_height * 0.5 + 0.35 + float(ring_index) * 0.28
-			spray.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			funnel_root.add_child(spray)
+			skeleton.add_child(funnel)
+		var contact := Area3D.new()
+		contact.name = "WaterDisplacementVolume"
+		contact.position.y = -funnel_height * 0.5 + 0.4
+		contact.collision_layer = 0
+		contact.collision_mask = 0
+		contact.monitoring = false
+		contact.set_meta("radius", crown_radius * 0.78)
+		var contact_shape := CollisionShape3D.new()
+		var contact_cylinder := CylinderShape3D.new()
+		contact_cylinder.radius = crown_radius * 0.78
+		contact_cylinder.height = 2.2
+		contact_shape.shape = contact_cylinder
+		contact.add_child(contact_shape)
+		funnel_root.add_child(contact)
 		_storm_orbits.append(orbit)
+		_storm_rigs.append(skeleton)
+		_storm_contacts.append(contact)
 	_build_abyss_lights(storm_rng)
+
+
+func _build_tornado_mesh(funnel_height: float, base_radius: float, trunk_radius: float, crown_radius: float, phase: float) -> ArrayMesh:
+	const RADIAL_SEGMENTS := 64
+	const HEIGHT_SEGMENTS := 48
+	var vertices := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colors := PackedColorArray()
+	var uvs := PackedVector2Array()
+	var bones := PackedInt32Array()
+	var weights := PackedFloat32Array()
+	var indices := PackedInt32Array()
+	for ring in HEIGHT_SEGMENTS + 1:
+		var height_fraction := float(ring) / float(HEIGHT_SEGMENTS)
+		var body_radius := lerpf(base_radius, trunk_radius, smoothstep(0.0, 0.56, height_fraction))
+		var crown_blend := smoothstep(0.67, 0.94, height_fraction)
+		var profile_radius := lerpf(body_radius, crown_radius, crown_blend)
+		var centre := Vector2(
+			sin(height_fraction * 7.1 + phase),
+			cos(height_fraction * 5.3 + phase * 1.7)
+		) * height_fraction * height_fraction * 0.7
+		var lower_weight := clampf(1.0 - height_fraction * 2.0, 0.0, 1.0)
+		var middle_weight := 1.0 - absf(height_fraction - 0.5) * 2.0
+		var upper_weight := clampf(height_fraction * 2.0 - 1.0, 0.0, 1.0)
+		var weight_sum := maxf(lower_weight + middle_weight + upper_weight, 0.0001)
+		lower_weight /= weight_sum
+		middle_weight /= weight_sum
+		upper_weight /= weight_sum
+		for segment in RADIAL_SEGMENTS + 1:
+			var radial_fraction := float(segment) / float(RADIAL_SEGMENTS)
+			var angle := radial_fraction * TAU
+			var broad_lobe := sin(angle * 2.0 + height_fraction * 8.0 + phase) * lerpf(0.025, 0.11, crown_blend)
+			var fine_lobe := sin(angle * 7.0 - height_fraction * 19.0 + phase * 2.3) * 0.045
+			var ring_radius := profile_radius * (1.0 + broad_lobe + fine_lobe)
+			var radial := Vector3(cos(angle), 0.0, sin(angle))
+			vertices.append(Vector3(centre.x, (height_fraction - 0.5) * funnel_height, centre.y) + radial * ring_radius)
+			normals.append(radial)
+			colors.append(Color(lower_weight, middle_weight, upper_weight, crown_blend))
+			uvs.append(Vector2(radial_fraction, height_fraction))
+			bones.append_array(PackedInt32Array([0, 1, 2, 0]))
+			weights.append_array(PackedFloat32Array([lower_weight, middle_weight, upper_weight, 0.0]))
+	for ring in HEIGHT_SEGMENTS:
+		for segment in RADIAL_SEGMENTS:
+			var first := ring * (RADIAL_SEGMENTS + 1) + segment
+			var next := first + RADIAL_SEGMENTS + 1
+			indices.append_array(PackedInt32Array([first, next, first + 1, first + 1, next, next + 1]))
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_BONES] = bones
+	arrays[Mesh.ARRAY_WEIGHTS] = weights
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
 
 
 func _build_abyss_lights(storm_rng: RandomNumberGenerator) -> void:
@@ -606,11 +685,14 @@ func _clear_storm_interior() -> void:
 	_storm_interior.queue_free()
 	_storm_interior = null
 	_storm_orbits.clear()
+	_storm_rigs.clear()
+	_storm_contacts.clear()
 
 
 func _update_storms(delta: float) -> void:
 	if body_kind != "cyclops":
 		return
+	_storm_elapsed += delta
 	var camera := get_viewport().get_camera_3d()
 	if camera == null:
 		return
@@ -621,6 +703,17 @@ func _update_storms(delta: float) -> void:
 		_clear_storm_interior()
 	for orbit in _storm_orbits:
 		orbit.rotate_y(float(orbit.get_meta("speed")) * delta)
+	for rig_index in _storm_rigs.size():
+		var rig := _storm_rigs[rig_index]
+		var phase := float(rig.get_meta("phase"))
+		for bone_index in 3:
+			var height_weight := float(bone_index + 1) / 3.0
+			var churn := _storm_elapsed * (1.15 + height_weight * 0.72) + phase + float(bone_index) * 1.8
+			var tilt := Vector3(sin(churn * 0.43), 0.0, cos(churn * 0.37)) * (0.025 + height_weight * 0.055)
+			var twist := Quaternion(Vector3.UP, sin(churn * 0.53) * (0.08 + height_weight * 0.15))
+			rig.set_bone_pose_rotation(bone_index, Basis.from_euler(tilt).get_rotation_quaternion() * twist)
+			var rest_position := rig.get_bone_rest(bone_index).origin
+			rig.set_bone_pose_position(bone_index, rest_position + Vector3(sin(churn * 0.71), 0.0, cos(churn * 0.57)) * height_weight * 0.32)
 
 
 func _poll_atmosphere_lut() -> void:
@@ -673,6 +766,17 @@ func _refresh_effect_transform_params() -> void:
 		_ocean_params[4] = direction.x
 		_ocean_params[5] = direction.y
 		_ocean_params[6] = direction.z
+		for index in STORM_CONTACT_COUNT:
+			var offset := 40 + index * 4
+			if index < _storm_contacts.size() and is_instance_valid(_storm_contacts[index]):
+				var contact := _storm_contacts[index]
+				var contact_position := contact.global_position
+				_ocean_params[offset] = contact_position.x
+				_ocean_params[offset + 1] = contact_position.y
+				_ocean_params[offset + 2] = contact_position.z
+				_ocean_params[offset + 3] = float(contact.get_meta("radius"))
+			else:
+				_ocean_params[offset + 3] = 0.0
 	if not _atmosphere_params.is_empty():
 		_atmosphere_params[0] = global_position.x
 		_atmosphere_params[1] = global_position.y

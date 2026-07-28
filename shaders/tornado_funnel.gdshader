@@ -1,58 +1,59 @@
 shader_type spatial;
-render_mode unshaded, blend_mix, cull_disabled, depth_draw_never, shadows_disabled, fog_disabled;
+render_mode unshaded, blend_mix, cull_disabled, depth_prepass_alpha, shadows_disabled, fog_disabled;
 
-uniform vec3 dark_color : source_color = vec3(0.018, 0.035, 0.04);
-uniform vec3 mist_color : source_color = vec3(0.32, 0.48, 0.5);
+uniform vec3 dark_color : source_color = vec3(0.003, 0.009, 0.009);
+uniform vec3 water_color : source_color = vec3(0.012, 0.052, 0.055);
+uniform vec3 mist_color : source_color = vec3(0.04, 0.09, 0.085);
 uniform float phase = 0.0;
 uniform float layer_offset = 0.0;
-uniform float opacity = 0.45;
+uniform float radial_scale = 1.0;
+uniform float opacity = 0.9;
 
-varying vec3 local_position;
+varying float height_fraction;
+varying float angular_position;
+varying float churn_value;
+varying float crown_mask;
 
-float hash(vec2 value) {
-	return fract(sin(dot(value, vec2(127.1, 311.7))) * 43758.5453);
-}
-
-float noise(vec2 value) {
-	vec2 cell = floor(value);
-	vec2 blend_value = fract(value);
-	blend_value = blend_value * blend_value * (3.0 - 2.0 * blend_value);
-	return mix(
-		mix(hash(cell), hash(cell + vec2(1.0, 0.0)), blend_value.x),
-		mix(hash(cell + vec2(0.0, 1.0)), hash(cell + vec2(1.0)), blend_value.x),
-		blend_value.y
-	);
-}
-
-float fbm(vec2 value) {
-	float result = 0.0;
-	float amplitude = 0.5;
-	for (int octave = 0; octave < 5; octave++) {
-		result += noise(value) * amplitude;
-		value = mat2(vec2(1.6, 1.2), vec2(-1.2, 1.6)) * value + 3.1;
-		amplitude *= 0.52;
-	}
-	return result;
+float wave_noise(vec3 value) {
+	float first = sin(value.x + sin(value.y * 1.37) * 1.8);
+	float second = sin(value.y * 1.91 - value.z * 0.73 + first * 1.2);
+	float third = sin(value.z * 2.47 + value.x * 0.61 - second);
+	return (first + second + third) / 3.0;
 }
 
 void vertex() {
-	local_position = VERTEX;
-	float height_fraction = UV.y;
-	float angle = TIME * (2.4 + layer_offset) + phase + height_fraction * 10.0;
-	vec2 sway = vec2(sin(TIME * 0.72 + height_fraction * 3.8 + phase), cos(TIME * 0.58 + height_fraction * 4.6 + phase));
-	VERTEX.xz += vec2(cos(angle), sin(angle)) * (0.16 + height_fraction * 0.52);
-	VERTEX.xz += sway * height_fraction * height_fraction * 0.85;
+	height_fraction = UV.y;
+	crown_mask = COLOR.a;
+	float angle = atan(VERTEX.z, VERTEX.x);
+	float joint_phase = dot(COLOR.rgb, vec3(0.0, 1.7, 3.8));
+	float spin = TIME * (2.35 + layer_offset * 0.64) + phase + height_fraction * 9.0 + joint_phase;
+	float coarse = wave_noise(vec3(angle * 2.1, height_fraction * 8.0 - TIME * 0.68, phase + layer_offset));
+	float fine = wave_noise(vec3(angle * 5.7 + TIME, height_fraction * 19.0, phase * 1.9));
+	float displacement = coarse * mix(0.42, 1.55, crown_mask) + fine * 0.34;
+	vec2 radial_direction = normalize(VERTEX.xz);
+	VERTEX.xz *= radial_scale;
+	VERTEX.xz += radial_direction * displacement;
+	VERTEX.xz += vec2(sin(spin), cos(spin * 0.83)) * (0.12 + height_fraction * height_fraction * 0.72);
+	angular_position = angle + spin * 0.18;
+	churn_value = coarse * 0.63 + fine * 0.37;
 }
 
 void fragment() {
-	float angle = atan(local_position.z, local_position.x);
-	float spiral = sin(angle * 7.0 - UV.y * 29.0 + TIME * (6.5 + layer_offset) + phase);
-	float turbulence = fbm(vec2(angle * 2.2 + TIME * 0.7, UV.y * 12.0 - TIME * 2.1 + layer_offset));
-	float gaps = fbm(vec2(angle * 5.0 - TIME * 1.3, UV.y * 23.0 + phase));
-	float density = smoothstep(0.28, 0.86, turbulence + spiral * 0.23 - gaps * 0.2);
-	float edge_fade = smoothstep(0.0, 0.12, UV.y) * (1.0 - smoothstep(0.82, 1.0, UV.y));
-	float inner_shadow = smoothstep(0.0, 0.7, abs(sin(angle + TIME * 2.0 + phase)));
-	ALBEDO = mix(dark_color * (0.55 + inner_shadow * 0.35), mist_color, density);
-	EMISSION = mist_color * density * 0.055;
-	ALPHA = (0.08 + density * opacity) * edge_fade;
+	float descending_band = sin(angular_position * 1.35 - height_fraction * 58.0 + TIME * (5.4 + layer_offset * 1.1) + phase);
+	float broken_band = sin(angular_position * 4.2 + height_fraction * 17.0 - TIME * 2.3 + churn_value * 2.6);
+	float broad_mass = sin(angular_position * 0.72 - height_fraction * 21.0 + TIME * 1.8 + phase * 0.6);
+	float density = smoothstep(-0.52, 0.72, descending_band + broken_band * 0.34 + churn_value * 0.55);
+	density = mix(density, smoothstep(-0.78, 0.45, broad_mass + churn_value), crown_mask * 0.42);
+	float height_fade = smoothstep(0.0, 0.018, height_fraction) * (1.0 - smoothstep(0.975, 1.0, height_fraction));
+	float silhouette_breakup = smoothstep(-0.95, -0.18, churn_value + density * 0.82 + crown_mask * 0.18);
+	float fresnel = pow(1.0 - abs(dot(normalize(NORMAL), normalize(VIEW))), 2.2);
+	vec3 body_color = mix(dark_color, water_color, density * 0.58 + height_fraction * 0.12);
+	body_color = mix(body_color, mist_color, fresnel * (0.16 + crown_mask * 0.22) + density * 0.08 * layer_offset);
+	float outer_layer = smoothstep(0.25, 0.72, layer_offset);
+	silhouette_breakup = mix(0.86 + density * 0.14, silhouette_breakup, outer_layer);
+	float layer_alpha = mix(0.82 + density * 0.18, 0.13 + density * 0.44 + fresnel * 0.2, outer_layer);
+	ALBEDO = body_color;
+	EMISSION = mist_color * fresnel * 0.018;
+	ALPHA = opacity * layer_alpha * height_fade * silhouette_breakup;
+	ALPHA_SCISSOR_THRESHOLD = mix(0.018, 0.11, outer_layer);
 }

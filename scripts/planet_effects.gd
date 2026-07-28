@@ -19,7 +19,7 @@ const OceanCausticTexture := preload("res://assets/ocean_textures/caustics.png")
 const BlueNoiseTexture := preload("res://assets/planet_textures/blue_noise.png")
 
 const MAX_BODIES := 16
-const OCEAN_FLOATS := 40
+const OCEAN_FLOATS := 76
 const ATMOSPHERE_FLOATS := 20
 const PUSH_CONSTANT_SIZE := 96
 const WORKGROUP_SIZE := 8
