@@ -10,7 +10,7 @@ static func get_body_definitions() -> Array[Dictionary]:
 			"data": {
 				"body_kind": "earth", "radius": 46.0, "gravity": 8.0, "seed": 93847, "ocean": true, "atmosphere": true,
 				"ocean_foam_scale": 1.6, "ocean_foam_distance": 0.85, "ocean_refraction_strength": 0.0025,
-				"underwater_tint": Color(0.03, 0.46, 0.68), "underwater_darkness": 0.32,
+				"underwater_tint": Color(0.02, 0.32, 0.70), "underwater_darkness": 0.32,
 			},
 		},
 		{

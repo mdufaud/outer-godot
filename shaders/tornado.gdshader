@@ -55,16 +55,30 @@ float lightning_bolt(vec3 direction, vec3 observer_direction, float seed, out fl
 	vec3 strike_direction = lightning_direction(seed, observer_direction);
 	vec2 coordinates = lightning_coordinates(direction, strike_direction);
 	float depth = dot(direction, strike_direction);
-	float path = (noise1(coordinates.y * 31.0 + seed) - 0.5) * 0.052;
-	path += (noise1(coordinates.y * 73.0 - seed * 1.7) - 0.5) * 0.015;
-	float trunk = 1.0 - smoothstep(0.001, 0.005, abs(coordinates.x - path));
-	float vertical_mask = smoothstep(-0.25, -0.2, coordinates.y) * (1.0 - smoothstep(0.15, 0.21, coordinates.y));
-	float branch_path = path + (coordinates.y + 0.02) * 0.36;
-	float branch = 1.0 - smoothstep(0.001, 0.004, abs(coordinates.x - branch_path));
-	branch *= smoothstep(-0.05, 0.01, coordinates.y) * (1.0 - smoothstep(0.13, 0.2, coordinates.y));
+	float coarse_frequency = mix(18.0, 43.0, hash1(seed + 8.1));
+	float fine_frequency = mix(57.0, 109.0, hash1(seed + 11.7));
+	float path = (noise1(coordinates.y * coarse_frequency + seed) - 0.5) * mix(0.035, 0.082, hash1(seed + 15.3));
+	path += (noise1(coordinates.y * fine_frequency - seed * 1.7) - 0.5) * mix(0.008, 0.024, hash1(seed + 19.9));
+	float thickness = mix(0.0025, 0.006, hash1(seed + 23.4));
+	float trunk = 1.0 - smoothstep(thickness * 0.25, thickness, abs(coordinates.x - path));
+	float vertical_start = mix(-0.38, -0.19, hash1(seed + 27.8));
+	float vertical_end = mix(0.12, 0.32, hash1(seed + 31.2));
+	float vertical_mask = smoothstep(vertical_start, vertical_start + 0.045, coordinates.y) * (1.0 - smoothstep(vertical_end - 0.055, vertical_end, coordinates.y));
+	float branch_origin = mix(-0.08, 0.11, hash1(seed + 35.6));
+	float branch_end = min(branch_origin + mix(0.07, 0.19, hash1(seed + 39.1)), vertical_end);
+	float branch_side = hash1(seed + 42.5) < 0.5 ? -1.0 : 1.0;
+	float branch_path = path + (coordinates.y - branch_origin) * mix(0.2, 0.72, hash1(seed + 46.9)) * branch_side;
+	float branch = 1.0 - smoothstep(thickness * 0.2, thickness * 0.78, abs(coordinates.x - branch_path));
+	branch *= smoothstep(branch_origin, branch_origin + 0.025, coordinates.y) * (1.0 - smoothstep(branch_end - 0.03, branch_end, coordinates.y));
+	float second_origin = mix(-0.14, 0.05, hash1(seed + 50.4));
+	float second_end = min(second_origin + mix(0.06, 0.15, hash1(seed + 53.8)), vertical_end);
+	float second_path = path - (coordinates.y - second_origin) * mix(0.18, 0.58, hash1(seed + 57.2)) * branch_side;
+	float second_branch = 1.0 - smoothstep(thickness * 0.2, thickness * 0.7, abs(coordinates.x - second_path));
+	second_branch *= smoothstep(second_origin, second_origin + 0.025, coordinates.y) * (1.0 - smoothstep(second_end - 0.025, second_end, coordinates.y));
+	second_branch *= step(0.45, hash1(seed + 61.6));
 	float facing_mask = smoothstep(0.72, 0.91, depth);
 	cloud_glow = pow(max(depth, 0.0), 16.0);
-	return max(trunk * vertical_mask, branch * 0.68) * facing_mask;
+	return max(trunk * vertical_mask, max(branch * 0.72, second_branch * 0.58)) * facing_mask;
 }
 
 float value_noise(vec3 p) {
@@ -149,29 +163,42 @@ void fragment() {
 	float light_wrap = clamp(dot(direction, normalize(vec3(-0.55, 0.38, 0.74))) * 0.5 + 0.5, 0.0, 1.0);
 	float lightning = 0.0;
 	float lightning_glow = 0.0;
+	vec3 observer_direction = normalize(v_local_camera);
+	float burst_duration = 9.0;
+	float burst_cycle = floor(TIME / burst_duration);
+	float burst_time = TIME - burst_cycle * burst_duration;
+	float burst_seed = burst_cycle * 83.17 + 12.4;
+	int bolt_count = 1 + int(floor(hash1(burst_seed + 3.8) * 6.0));
+	for (int bolt_index = 0; bolt_index < 6; bolt_index++) {
+		if (bolt_index < bolt_count) {
+			float bolt_value = float(bolt_index);
+			float bolt_seed = burst_seed + bolt_value * 37.91;
+			float strike_time = 0.45 + bolt_value * 1.15 + hash1(bolt_seed + 5.6) * 0.75;
+			float local_time = burst_time - strike_time;
+			float active = step(0.0, local_time) * (1.0 - step(0.32, local_time));
+			float primary_flash = exp(-local_time * mix(22.0, 38.0, hash1(bolt_seed + 9.2)));
+			float echo_delay = mix(0.07, 0.14, hash1(bolt_seed + 13.5));
+			float secondary_flash = exp(-abs(local_time - echo_delay) * mix(42.0, 68.0, hash1(bolt_seed + 17.8))) * mix(0.3, 0.72, hash1(bolt_seed + 21.1));
+			float pulse = min(primary_flash + secondary_flash, 1.0) * active;
+			float bolt_glow = 0.0;
+			float bolt = lightning_bolt(direction, observer_direction, bolt_seed, bolt_glow);
+			lightning = max(lightning, bolt * pulse);
+			lightning_glow = max(lightning_glow, bolt_glow * pulse);
+		}
+	}
 	if (interior) {
 		col *= mix(0.52, 0.92, limb) * mix(0.72, 1.0, light_wrap);
 		col += interior_storm_color * (0.035 + broad_noise * 0.045);
-		float lightning_phase = fract(TIME * 0.28);
-		float lightning_cycle = floor(TIME * 0.28);
-		float primary_flash = exp(-lightning_phase * 24.0);
-		float secondary_flash = exp(-abs(lightning_phase - 0.13) * 52.0) * 0.58;
-		float pulse = min(primary_flash + secondary_flash, 1.0);
-		float first_glow = 0.0;
-		float second_glow = 0.0;
-		vec3 observer_direction = normalize(v_local_camera);
-		float first_bolt = lightning_bolt(direction, observer_direction, lightning_cycle * 13.7 + 2.0, first_glow);
-		float second_bolt = lightning_bolt(direction, observer_direction, lightning_cycle * 17.3 + 31.0, second_glow);
-		lightning = max(first_bolt, second_bolt) * pulse;
-		lightning_glow = max(first_glow, second_glow) * pulse;
 		col += lightning_color * (lightning * 1.8 + lightning_glow * 0.14);
 	} else {
 		col *= mix(0.26, 0.9, limb) * mix(0.58, 1.02, light_wrap);
+		col += lightning_color * (lightning * 1.25 + lightning_glow * 0.08);
 	}
 	float rim = interior ? 0.0 : 1.0 - smoothstep(0.03, 0.2, facing);
 	col = mix(col, rim_color, rim * 0.65);
 
 	ALBEDO = col;
 	EMISSION = col * 0.008 + base_highlight * cloud_highlights * 0.008 + rim_color * rim * 0.8;
-	EMISSION += lightning_color * (lightning * 1.8 + lightning_glow * 0.32);
+	float exterior_lightning_filter = interior ? 1.0 : 0.72;
+	EMISSION += lightning_color * (lightning * 1.8 + lightning_glow * 0.32) * exterior_lightning_filter;
 }
