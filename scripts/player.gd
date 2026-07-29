@@ -125,9 +125,17 @@ func _physics_process(delta: float) -> void:
 		frame_position = reference_source.global_position
 	var relative_velocity := velocity - previous_frame_velocity
 	var vertical_speed := relative_velocity.dot(up_dir)
+	var storm_push := Vector3.ZERO
+	if reference_source != null and reference_source.has_method("get_storm_push"):
+		storm_push = reference_source.get_storm_push(global_position)
+	var storm_lift := storm_push.dot(up_dir)
 	var grounded := is_on_floor()
 	if not grounded and surface_source != null and vertical_speed <= JUMP_SPEED * 0.5:
 		grounded = _ground_clearance(surface_source) <= GROUND_PROBE_DISTANCE
+	# An updraft stronger than gravity rips the player off the ground: the walk lerp and the floor
+	# snap would otherwise eat the whole lift and the tornado would only feel like a wall.
+	if storm_lift > relative_gravity.length():
+		grounded = false
 	var water_depth := -INF
 	if reference_source != null and reference_source.has_method("get_water_depth"):
 		water_depth = reference_source.get_water_depth(global_position)
@@ -155,10 +163,7 @@ func _physics_process(delta: float) -> void:
 		relative_velocity += thrust_dir * JETPACK_ACCEL * delta
 		if Input.is_action_pressed("brake"):
 			relative_velocity = relative_velocity.move_toward(Vector3.ZERO, JETPACK_BRAKE * delta)
-	if reference_source != null and reference_source.has_method("get_storm_push"):
-		relative_velocity += reference_source.get_storm_push(global_position) * delta
-	if reference_source != null and reference_source.has_method("constrain_storm_player_velocity"):
-		relative_velocity = reference_source.constrain_storm_player_velocity(global_position, relative_velocity)
+	relative_velocity += storm_push * delta
 
 	# CharacterBody3D judges floor snap, slope and collision sweeps against
 	# `velocity` in world space, and Terra alone orbits at 32 u/s. Feeding the
@@ -170,7 +175,7 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 	# Snap only keeps contact while walking on a moving body: never let it catch
 	# a fall, or the last centimeters feel magnetic.
-	if grounded and not swimming and absf(vertical_speed) < STICK_TO_GROUND_SPEED * 2.0 and not Input.is_action_just_pressed("jump"):
+	if grounded and not swimming and storm_lift <= 0.0 and absf(vertical_speed) < STICK_TO_GROUND_SPEED * 2.0 and not Input.is_action_just_pressed("jump"):
 		apply_floor_snap()
 	velocity += reference_velocity
 	_update_prompt()

@@ -3,6 +3,7 @@ extends AnimatableBody3D
 const PlanetQualityScript := preload("res://scripts/planet_quality.gd")
 const PlanetHeightGeneratorScript := preload("res://scripts/planet_height_generator.gd")
 const AtmosphereLutScript := preload("res://scripts/atmosphere_lut.gd")
+const CyclopsGeometryScript := preload("res://scripts/cyclops_geometry.gd")
 const EarthNoiseTexture := preload("res://assets/planet_textures/earth_noise.png")
 const MoonNoiseTexture := preload("res://assets/planet_textures/moon_noise.png")
 const CraterEjectaTexture := preload("res://assets/planet_textures/crater_ejecta_ray.png")
@@ -18,26 +19,18 @@ const WATCHFUL_EYE_DIRECTION := Vector3(0.0, 0.18, 1.0)
 const OCEAN_FOAM_COLOR := Color(0.92, 0.98, 1.0)
 const TORNADO_COUNT := 14
 const STORM_CONTACT_COUNT := 9
-const STORM_REFERENCE_OCEAN_RADIUS := 165.0
-const STORM_PRELOAD_MARGIN := 320.0
-const STORM_FULL_VISIBILITY_MARGIN := 180.0
-const STORM_FADE_MARGIN := 320.0
-const STORM_UNLOAD_MARGIN := 360.0
-const STORM_MOTION_SCALE := 0.5
-const STORM_SHELL_HEIGHT := 46.0
-const STORM_CLOUD_DEPTH := 30.0
-const STORM_CLOUD_EDGE_FADE_RATIO := 1.0 / 6.0
-const STORM_CLOUD_SHELL_OVERLAP_RATIO := 1.0 / 6.0
-const STORM_TORNADO_REVEAL_RATIO := 1.0 / 3.0
-const TORNADO_WIDTH_SCALE := 2.0
 const LANDING_ROCK_COUNT := 5
+# Angular and dimensionless storm quantities; every storm *length* lives in CyclopsGeometryScript.
+const STORM_MOTION_SCALE := 0.5
 const STORM_MIN_SEPARATION := 0.453786
-const STORM_SEPARATION_MARGIN := 6.0
 const STORM_ROCK_MIN_SEPARATION := 0.383972
-const STORM_MOBILE_PUSH := 15.0
-const STORM_POLAR_PUSH := 30.0
-const STORM_PLAYER_BARRIER_SCALE := 1.05
-const STORM_PLAYER_EJECTION_SPEED := 2.0
+# Storm grab, in surface gravities, and the catch radius as a multiple of the funnel radius.
+const STORM_LIFT_GRAVITY_SCALE := 3.2
+const STORM_POLAR_LIFT_SCALE := 1.3
+const STORM_SWIRL_GRAVITY_SCALE := 1.7
+const STORM_SUCTION_GRAVITY_SCALE := 0.7
+const STORM_CATCH_MARGIN := 1.4
+const STORM_LIFT_RELEASE_FRACTION := 0.85
 const POLAR_TORNADO_WIDTH_SCALE := 2.25
 const ATMOSPHERE_DITHER_STRENGTH := 0.3
 const ATMOSPHERE_DITHER_SCALE := 3.89
@@ -106,7 +99,6 @@ var _storm_contacts: Array[Area3D] = []
 var _storm_funnel_materials: Array[ShaderMaterial] = []
 var _storm_glows: Array[GeometryInstance3D] = []
 var _storm_lights: Array[OmniLight3D] = []
-var _storm_shell_radius := 0.0
 var _storm_elapsed := 0.0
 var _storm_visibility := 0.0
 var _storm_states: Array[Dictionary] = []
@@ -161,50 +153,42 @@ func get_surface_radius_towards(direction: Vector3) -> float:
 	return _core_radius() + _height_for(direction.normalized())
 
 
+func sea_level() -> float:
+	return radius + ocean_level
+
+
 func get_water_depth(position_value: Vector3) -> float:
 	if not has_ocean:
 		return -INF
-	return radius + ocean_level - position_value.distance_to(global_position)
+	return sea_level() - position_value.distance_to(global_position)
 
 
-func get_storm_scale() -> float:
-	return maxf(radius + ocean_level, 0.001) / STORM_REFERENCE_OCEAN_RADIUS
+func get_storm_deck_gap() -> float:
+	return CyclopsGeometryScript.deck_gap(sea_level())
 
 
-func get_storm_cloud_depth() -> float:
-	return STORM_CLOUD_DEPTH * get_storm_scale()
+func get_storm_deck_center() -> float:
+	return CyclopsGeometryScript.deck_center(sea_level())
 
 
-func get_storm_cloud_reveal_radius() -> float:
-	var cloud_depth := get_storm_cloud_depth()
-	return _storm_shell_radius - cloud_depth * STORM_CLOUD_SHELL_OVERLAP_RATIO
+func get_storm_deck_inner_radius() -> float:
+	return CyclopsGeometryScript.deck_inner_radius(sea_level())
 
 
-func get_storm_cloud_outer_radius() -> float:
-	return get_storm_cloud_reveal_radius() + get_storm_cloud_depth()
+func get_storm_deck_outer_radius() -> float:
+	return CyclopsGeometryScript.deck_outer_radius(sea_level())
 
 
 func get_storm_cloud_transition(position_value: Vector3) -> float:
 	if body_kind != "cyclops":
 		return 0.0
-	var camera_radius := position_value.distance_to(global_position)
-	var cloud_depth := get_storm_cloud_depth()
-	var edge_fade := cloud_depth * STORM_CLOUD_EDGE_FADE_RATIO
-	var outer_cloud_radius := get_storm_cloud_outer_radius()
-	var reveal_radius := get_storm_cloud_reveal_radius()
-	var exterior_fade := 1.0 - smoothstep(outer_cloud_radius - edge_fade, outer_cloud_radius, camera_radius)
-	var interior_fade := smoothstep(reveal_radius, reveal_radius + edge_fade, camera_radius)
-	return minf(exterior_fade, interior_fade)
+	return CyclopsGeometryScript.cloud_transition(sea_level(), position_value.distance_to(global_position))
 
 
 func get_storm_sky_occlusion(position_value: Vector3) -> float:
 	if body_kind != "cyclops":
 		return 0.0
-	var cloud_depth := get_storm_cloud_depth()
-	var edge_fade := cloud_depth * STORM_CLOUD_EDGE_FADE_RATIO
-	var camera_radius := position_value.distance_to(global_position)
-	var outer_cloud_radius := get_storm_cloud_outer_radius()
-	return 1.0 - smoothstep(outer_cloud_radius - edge_fade, outer_cloud_radius, camera_radius)
+	return CyclopsGeometryScript.sky_occlusion(sea_level(), position_value.distance_to(global_position))
 
 
 func get_gravitational_parameter() -> float:
@@ -286,7 +270,7 @@ func get_collider_surface_radius(direction: Vector3) -> float:
 func get_landing_point(direction: Vector3, clearance := 0.0) -> Vector3:
 	var unit_direction := direction.normalized()
 	if body_kind == "cyclops" and has_ocean:
-		return global_position + unit_direction * (radius + ocean_level + clearance)
+		return global_position + unit_direction * (sea_level() + clearance)
 	return global_position + unit_direction * (get_collider_surface_radius(unit_direction) + clearance)
 
 
@@ -550,7 +534,7 @@ func _build_atmosphere() -> void:
 
 
 func get_ocean_effect_radius() -> float:
-	return radius + ocean_level + 0.03 if has_ocean else 0.0
+	return sea_level() + 0.03 if has_ocean else 0.0
 
 
 func get_ocean_effect_params() -> PackedFloat32Array:
@@ -574,12 +558,11 @@ func _build_landing_rocks() -> void:
 	rng.seed = rng_seed * 6211 + 203
 	var material := ShaderMaterial.new()
 	material.shader = CyclopsRockShader
-	var ocean_radius := radius + ocean_level
-	var scale := get_storm_scale()
+	var ocean_radius := sea_level()
 	for index in LANDING_ROCK_COUNT:
 		var direction := _choose_landing_rock_direction(rng)
-		var rock_radius := rng.randf_range(7.0, 10.0) * scale
-		var rock_height := rng.randf_range(10.0, 15.0) * scale
+		var rock_radius := rng.randf_range(0.042, 0.061) * ocean_radius
+		var rock_height := rng.randf_range(0.061, 0.091) * ocean_radius
 		var geometry := _build_landing_rock_geometry(rock_radius, rock_height, rng)
 		var rock_basis := _surface_basis(direction, rng.randf_range(0.0, TAU))
 		var rock_transform := Transform3D(rock_basis, direction * ocean_radius)
@@ -682,12 +665,12 @@ func _surface_basis(direction: Vector3, roll: float) -> Basis:
 func _build_storm_system() -> void:
 	if body_kind != "cyclops":
 		return
-	var scale := get_storm_scale()
+	# One opaque shell: cull_disabled means it already flips from exterior cloud ball to interior
+	# ceiling when the camera crosses it, and the screen tint is opaque at that crossing.
 	var cloud_shell := MeshInstance3D.new()
 	cloud_shell.name = "StormCloudShell"
 	var cloud_mesh := SphereMesh.new()
-	_storm_shell_radius = radius + ocean_level + STORM_SHELL_HEIGHT * scale
-	cloud_mesh.radius = _storm_shell_radius
+	cloud_mesh.radius = get_storm_deck_center()
 	cloud_mesh.height = cloud_mesh.radius * 2.0
 	cloud_mesh.radial_segments = 96
 	cloud_mesh.rings = 48
@@ -697,20 +680,6 @@ func _build_storm_system() -> void:
 	cloud_shell.material_override = cloud_material
 	cloud_shell.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(cloud_shell)
-	var outer_cloud_shell := MeshInstance3D.new()
-	outer_cloud_shell.name = "StormOuterCloudShell"
-	var outer_cloud_mesh := SphereMesh.new()
-	outer_cloud_mesh.radius = get_storm_cloud_outer_radius()
-	outer_cloud_mesh.height = outer_cloud_mesh.radius * 2.0
-	outer_cloud_mesh.radial_segments = 96
-	outer_cloud_mesh.rings = 48
-	var outer_cloud_material := ShaderMaterial.new()
-	outer_cloud_material.shader = preload("res://shaders/tornado.gdshader")
-	outer_cloud_material.set_shader_parameter("swirl_speed", 0.013)
-	outer_cloud_shell.mesh = outer_cloud_mesh
-	outer_cloud_shell.material_override = outer_cloud_material
-	outer_cloud_shell.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(outer_cloud_shell)
 	_initialize_storm_states()
 
 
@@ -742,14 +711,18 @@ func _initialize_storm_states() -> void:
 
 
 func _make_storm_state(rng: RandomNumberGenerator, direction: Vector3, is_static: bool, width_scale: float, shape_kind: int, state_name: String) -> Dictionary:
-	var planet_scale := get_storm_scale()
-	var width := TORNADO_WIDTH_SCALE * width_scale * planet_scale
-	var crown_radius := rng.randf_range(17.0, 21.0) * width
+	# The funnel spans the sea-to-deck gap by construction: its foot is pinned to sea_level() and
+	# its crown always lands inside the deck, whatever the planet size.
+	var funnel_height := CyclopsGeometryScript.funnel_height(sea_level(), rng.randf())
+	var width := funnel_height * width_scale
+	var crown_range := CyclopsGeometryScript.CROWN_RADIUS_RANGE
+	var trunk_range := CyclopsGeometryScript.TRUNK_RADIUS_RANGE
+	var base_range := CyclopsGeometryScript.BASE_RADIUS_RANGE
+	var crown_radius := rng.randf_range(crown_range.x, crown_range.y) * width
 	var roll := rng.randf_range(0.0, TAU)
 	var phase := rng.randf_range(0.0, TAU)
-	var funnel_height := (STORM_SHELL_HEIGHT + rng.randf_range(5.0, 8.0)) * planet_scale
-	var base_radius := rng.randf_range(3.5, 4.8) * width
-	var trunk_radius := rng.randf_range(6.8, 8.4) * width
+	var base_radius := rng.randf_range(base_range.x, base_range.y) * width
+	var trunk_radius := rng.randf_range(trunk_range.x, trunk_range.y) * width
 	var shape_seed := 0.0 if is_static else rng.randf_range(0.0, 100.0)
 	var bend_scale := 0.0 if is_static else rng.randf_range(0.85, 1.75)
 	var bend_speed := 1.0 if is_static else rng.randf_range(0.72, 1.38)
@@ -771,7 +744,7 @@ func _make_storm_state(rng: RandomNumberGenerator, direction: Vector3, is_static
 		"base_radius": base_radius,
 		"trunk_radius": trunk_radius,
 		"crown_radius": crown_radius,
-		"contact_radius": crown_radius * 0.78,
+		"contact_radius": crown_radius * CyclopsGeometryScript.CONTACT_RADIUS_RATIO,
 		"velocity": Vector3.ZERO,
 		"wander_axis": Vector3.RIGHT,
 		"wander_phase": 0.0,
@@ -803,12 +776,14 @@ func _choose_storm_direction(crown_radius: float, contact_radius: float, rng: Ra
 
 
 func _storm_minimum_angle(first_radius: float, second_radius: float) -> float:
-	var footprint := clampf((first_radius + second_radius + STORM_SEPARATION_MARGIN * get_storm_scale()) / _storm_shell_radius, 0.0, 0.95)
+	var margin := sea_level() * CyclopsGeometryScript.SEPARATION_MARGIN_RATIO
+	var footprint := clampf((first_radius + second_radius + margin) / get_storm_deck_center(), 0.0, 0.95)
 	return maxf(STORM_MIN_SEPARATION, asin(footprint))
 
 
 func _storm_rock_minimum_angle(contact_radius: float, rock_radius: float) -> float:
-	var footprint := clampf((contact_radius + rock_radius + STORM_SEPARATION_MARGIN * get_storm_scale()) / (radius + ocean_level), 0.0, 0.95)
+	var margin := sea_level() * CyclopsGeometryScript.SEPARATION_MARGIN_RATIO
+	var footprint := clampf((contact_radius + rock_radius + margin) / sea_level(), 0.0, 0.95)
 	return maxf(STORM_ROCK_MIN_SEPARATION, asin(footprint))
 
 
@@ -832,7 +807,7 @@ func _build_storm_interior() -> void:
 		var funnel_height := float(state.funnel_height)
 		var funnel_root := Node3D.new()
 		funnel_root.name = "Tornado"
-		funnel_root.position = Vector3(radius + ocean_level + funnel_height * 0.5, 0.0, 0.0)
+		funnel_root.position = Vector3(sea_level() + funnel_height * 0.5, 0.0, 0.0)
 		funnel_root.rotation_degrees.z = -90.0
 		orbit.add_child(funnel_root)
 		var base_phase := float(state.phase)
@@ -845,6 +820,7 @@ func _build_storm_interior() -> void:
 		skeleton.name = "TornadoRig"
 		skeleton.set_meta("phase", base_phase)
 		skeleton.set_meta("static", bool(state.static))
+		skeleton.set_meta("funnel_height", funnel_height)
 		var bend_scale: float = [0.18, 0.42, 0.78, 1.0][shape_kind] if bool(state.static) else float(state.bend_scale) * [0.7, 0.9, 1.1, 1.25][shape_kind]
 		skeleton.set_meta("bend_scale", bend_scale)
 		skeleton.set_meta("bend_speed", float(state.bend_speed))
@@ -888,14 +864,14 @@ func _build_storm_interior() -> void:
 			skirt.position.y = -funnel_height * 0.5
 			skirt.material_override = funnel_material
 			skirt.custom_aabb = AABB(
-				Vector3(-base_radius * 5.0, -2.0 * get_storm_scale(), -base_radius * 5.0),
+				Vector3(-base_radius * 5.0, -funnel_height * CyclopsGeometryScript.ACTIVE_BAND_RATIO, -base_radius * 5.0),
 				Vector3(base_radius * 10.0, funnel_height * 0.35, base_radius * 10.0)
 			)
 			skirt.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			funnel_root.add_child(skirt)
 		var contact := Area3D.new()
 		contact.name = "WaterDisplacementVolume"
-		contact.position.y = -funnel_height * 0.5 + 0.4 * get_storm_scale()
+		contact.position.y = -funnel_height * 0.5 + funnel_height * 0.009
 		contact.collision_layer = 0
 		contact.collision_mask = 0
 		contact.monitoring = false
@@ -903,7 +879,7 @@ func _build_storm_interior() -> void:
 		var contact_shape := CollisionShape3D.new()
 		var contact_cylinder := CylinderShape3D.new()
 		contact_cylinder.radius = float(state.contact_radius)
-		contact_cylinder.height = 2.2 * get_storm_scale()
+		contact_cylinder.height = funnel_height * 0.048
 		contact_shape.shape = contact_cylinder
 		contact.add_child(contact_shape)
 		funnel_root.add_child(contact)
@@ -946,7 +922,7 @@ func _build_tornado_mesh(funnel_height: float, base_radius: float, trunk_radius:
 			crown_blend = smoothstep(0.72, 0.95, height_fraction)
 		var body_radius := lerpf(base_radius, trunk_radius, body_blend)
 		var profile_radius := lerpf(body_radius, crown_radius, crown_blend)
-		var centre := _tornado_centre_offset(height_fraction, phase, shape_kind, shape_seed, randomize_shape)
+		var centre := _tornado_centre_offset(height_fraction, funnel_height, phase, shape_kind, shape_seed, randomize_shape)
 		var lower_weight := clampf(1.0 - height_fraction * 2.0, 0.0, 1.0)
 		var middle_weight := 1.0 - absf(height_fraction - 0.5) * 2.0
 		var upper_weight := clampf(height_fraction * 2.0 - 1.0, 0.0, 1.0)
@@ -995,26 +971,27 @@ func _tornado_shape_random(shape_seed: float, channel: float) -> float:
 	return fposmod(sin(shape_seed * 12.9898 + channel * 78.233) * 43758.5453, 1.0)
 
 
-func _tornado_centre_offset(height_fraction: float, phase: float, shape_kind: int, shape_seed: float, randomize_shape: bool) -> Vector2:
+# Coefficients are fractions of the funnel height, applied once at the end.
+func _tornado_centre_offset(height_fraction: float, funnel_height: float, phase: float, shape_kind: int, shape_seed: float, randomize_shape: bool) -> Vector2:
 	var centre := Vector2.ZERO
 	match shape_kind:
 		0:
-			centre = Vector2(sin(height_fraction * 5.0), cos(height_fraction * 4.0)) * height_fraction * 0.25
+			centre = Vector2(sin(height_fraction * 5.0), cos(height_fraction * 4.0)) * height_fraction * 0.005
 		1:
-			centre = Vector2(sin(height_fraction * 6.2), cos(height_fraction * 4.7)) * height_fraction * height_fraction * 1.5
+			centre = Vector2(sin(height_fraction * 6.2), cos(height_fraction * 4.7)) * height_fraction * height_fraction * 0.032
 		2:
-			centre = Vector2(smoothstep(0.0, 1.0, height_fraction) * 7.5, sin(height_fraction * PI) * 1.5)
+			centre = Vector2(smoothstep(0.0, 1.0, height_fraction) * 0.162, sin(height_fraction * PI) * 0.032)
 		3:
-			centre = Vector2(sin(height_fraction * TAU) * 8.5, sin(height_fraction * PI) * 1.2)
+			centre = Vector2(sin(height_fraction * TAU) * 0.184, sin(height_fraction * PI) * 0.026)
 	if randomize_shape:
 		var irregular_frequency := lerpf(1.7, 3.8, _tornado_shape_random(shape_seed, 0.0))
-		var irregular_amplitude := lerpf(0.8, 3.2, _tornado_shape_random(shape_seed, 1.0))
+		var irregular_amplitude := lerpf(0.017, 0.069, _tornado_shape_random(shape_seed, 1.0))
 		var irregular := Vector2(
 			sin(height_fraction * PI * irregular_frequency + shape_seed),
 			cos(height_fraction * PI * (irregular_frequency * 0.73) + shape_seed * 1.37)
 		) * pow(height_fraction, 1.25) * irregular_amplitude
 		centre += irregular
-	return centre.rotated(phase) * get_storm_scale()
+	return centre.rotated(phase) * funnel_height
 
 
 # Flared foot for the funnel: same shader, same UV.y scale and same lateral drift,
@@ -1024,7 +1001,7 @@ func _build_storm_skirt_mesh(funnel_height: float, base_radius: float, phase: fl
 	const HEIGHT_SEGMENTS := 14
 	var skirt_height := funnel_height * 0.3
 	var flare_radius := base_radius * 2.2
-	var base_centre := _tornado_centre_offset(0.0, phase, shape_kind, shape_seed, randomize_shape)
+	var base_centre := _tornado_centre_offset(0.0, funnel_height, phase, shape_kind, shape_seed, randomize_shape)
 	var vertices := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var colors := PackedColorArray()
@@ -1034,7 +1011,7 @@ func _build_storm_skirt_mesh(funnel_height: float, base_radius: float, phase: fl
 		var ring_fraction := float(ring) / float(HEIGHT_SEGMENTS)
 		var height_fraction := ring_fraction * skirt_height / funnel_height
 		var profile_radius := lerpf(base_radius * 1.02, flare_radius, pow(1.0 - ring_fraction, 2.8))
-		var centre := _tornado_centre_offset(height_fraction, phase, shape_kind, shape_seed, randomize_shape) - base_centre
+		var centre := _tornado_centre_offset(height_fraction, funnel_height, phase, shape_kind, shape_seed, randomize_shape) - base_centre
 		for segment in RADIAL_SEGMENTS + 1:
 			var radial_fraction := float(segment) / float(RADIAL_SEGMENTS)
 			var angle := radial_fraction * TAU
@@ -1064,7 +1041,7 @@ func _build_storm_skirt_mesh(funnel_height: float, base_radius: float, phase: fl
 
 
 func _build_abyss_lights(storm_rng: RandomNumberGenerator) -> void:
-	var scale := get_storm_scale()
+	var ocean_radius := sea_level()
 	var glow_material := StandardMaterial3D.new()
 	glow_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	glow_material.albedo_color = Color(0.08, 0.8, 0.68)
@@ -1079,11 +1056,11 @@ func _build_abyss_lights(storm_rng: RandomNumberGenerator) -> void:
 		).normalized()
 		var source := Node3D.new()
 		source.name = "CoreGlow%d" % index
-		source.position = direction * (_core_radius() + storm_rng.randf_range(2.0, 8.0) * scale)
+		source.position = direction * (_core_radius() * storm_rng.randf_range(1.028, 1.110))
 		_storm_interior.add_child(source)
 		var glow := MeshInstance3D.new()
 		var glow_mesh := SphereMesh.new()
-		glow_mesh.radius = storm_rng.randf_range(0.8, 1.8) * scale
+		glow_mesh.radius = storm_rng.randf_range(0.005, 0.011) * ocean_radius
 		glow_mesh.height = glow_mesh.radius * 2.0
 		glow.mesh = glow_mesh
 		glow.material_override = glow_material
@@ -1096,7 +1073,7 @@ func _build_abyss_lights(storm_rng: RandomNumberGenerator) -> void:
 		var base_energy := storm_rng.randf_range(1.4, 2.3)
 		light.set_meta("base_energy", base_energy)
 		light.light_energy = base_energy * _storm_visibility
-		light.omni_range = storm_rng.randf_range(24.0, 36.0) * scale
+		light.omni_range = storm_rng.randf_range(0.145, 0.218) * ocean_radius
 		light.omni_attenuation = 1.35
 		light.shadow_enabled = false
 		source.add_child(light)
@@ -1122,70 +1099,45 @@ func _clear_storm_interior() -> void:
 	_storm_visibility = 0.0
 
 
+# A tornado swallows whoever comes close instead of walling them out: the funnel sucks the player
+# towards its axis, spins them around it and lifts them along it, then releases the lift under the
+# crown so the ride ends as a ballistic throw.
 func get_storm_push(world_position: Vector3) -> Vector3:
 	if body_kind != "cyclops" or _storm_states.is_empty():
 		return Vector3.ZERO
 	var offset := world_position - global_position
 	if offset.length_squared() < 0.0001:
 		return Vector3.ZERO
-	var local_up := offset.normalized()
-	var ocean_radius := radius + ocean_level
+	var ocean_radius := sea_level()
+	var deck_gap := get_storm_deck_gap()
 	var result := Vector3.ZERO
 	for state in _storm_states:
 		var axis := (global_basis * (state.direction as Vector3)).normalized()
 		var along_axis := offset.dot(axis)
 		var axial_height := along_axis - ocean_radius
 		var funnel_height := float(state.funnel_height)
-		if axial_height < -2.0 * get_storm_scale() or axial_height > funnel_height:
+		if axial_height < -deck_gap * CyclopsGeometryScript.ACTIVE_BAND_RATIO or axial_height > funnel_height:
 			continue
 		var lateral := offset - axis * along_axis
 		var height_fraction := clampf(axial_height / funnel_height, 0.0, 1.0)
-		var influence_radius := lerpf(float(state.contact_radius), float(state.crown_radius), height_fraction) * STORM_PLAYER_BARRIER_SCALE
+		var catch_radius := lerpf(float(state.contact_radius), float(state.crown_radius), height_fraction) * STORM_CATCH_MARGIN
 		var lateral_distance := lateral.length()
-		if lateral_distance >= influence_radius:
+		if lateral_distance >= catch_radius:
 			continue
-		var outward := lateral.normalized() if lateral_distance > 0.001 else _surface_basis(axis, 0.0).x
-		outward -= local_up * outward.dot(local_up)
-		if outward.length_squared() < 0.0001:
+		var radial_fraction := lateral_distance / catch_radius
+		var grip := 1.0 - smoothstep(0.35, 1.0, radial_fraction)
+		var lift_fade := 1.0 - smoothstep(STORM_LIFT_RELEASE_FRACTION, 1.0, height_fraction)
+		var lift_scale := STORM_POLAR_LIFT_SCALE if bool(state.static) else 1.0
+		result += axis * surface_gravity * STORM_LIFT_GRAVITY_SCALE * lift_scale * grip * lift_fade
+		if lateral_distance <= 0.001:
 			continue
-		var falloff := 1.0 - smoothstep(0.35, 1.0, lateral_distance / influence_radius)
-		var strength := (STORM_POLAR_PUSH if bool(state.static) else STORM_MOBILE_PUSH) * get_storm_scale()
-		result += outward.normalized() * strength * falloff
-	return result.limit_length(STORM_POLAR_PUSH * get_storm_scale())
-
-
-func constrain_storm_player_velocity(world_position: Vector3, player_velocity: Vector3) -> Vector3:
-	if body_kind != "cyclops" or _storm_states.is_empty():
-		return player_velocity
-	var offset := world_position - global_position
-	if offset.length_squared() < 0.0001:
-		return player_velocity
-	var local_up := offset.normalized()
-	var ocean_radius := radius + ocean_level
-	var constrained := player_velocity
-	for state in _storm_states:
-		var axis := (global_basis * (state.direction as Vector3)).normalized()
-		var along_axis := offset.dot(axis)
-		var axial_height := along_axis - ocean_radius
-		var funnel_height := float(state.funnel_height)
-		if axial_height < -2.0 * get_storm_scale() or axial_height > funnel_height:
-			continue
-		var lateral := offset - axis * along_axis
-		var height_fraction := clampf(axial_height / funnel_height, 0.0, 1.0)
-		var barrier_radius := lerpf(float(state.contact_radius), float(state.crown_radius), height_fraction) * STORM_PLAYER_BARRIER_SCALE
-		var lateral_distance := lateral.length()
-		if lateral_distance >= barrier_radius:
-			continue
-		var outward := lateral.normalized() if lateral_distance > 0.001 else _surface_basis(axis, 0.0).x
-		outward -= local_up * outward.dot(local_up)
-		if outward.length_squared() < 0.0001:
-			continue
-		outward = outward.normalized()
-		var inward_speed := constrained.dot(outward)
-		var ejection_speed := STORM_PLAYER_EJECTION_SPEED * get_storm_scale()
-		if inward_speed < ejection_speed:
-			constrained += outward * (ejection_speed - inward_speed)
-	return constrained
+		# Suction and swirl have no defined direction on the axis, and both fade to nothing there so
+		# the middle of the funnel is a clean updraft.
+		var inward := -lateral / lateral_distance
+		var wall_fraction := minf(radial_fraction / 0.35, 1.0)
+		result += inward * surface_gravity * STORM_SUCTION_GRAVITY_SCALE * grip * wall_fraction
+		result += axis.cross(inward) * surface_gravity * STORM_SWIRL_GRAVITY_SCALE * grip * wall_fraction
+	return result
 
 
 func _set_storm_visibility(value: float) -> void:
@@ -1281,16 +1233,13 @@ func _update_storms(delta: float) -> void:
 	if camera == null:
 		return
 	var camera_distance := camera.global_position.distance_to(global_position)
-	var scale := get_storm_scale()
-	var preload_radius := _storm_shell_radius + STORM_PRELOAD_MARGIN * scale
-	var full_visibility_radius := _storm_shell_radius + STORM_FULL_VISIBILITY_MARGIN * scale
-	var fade_radius := _storm_shell_radius + STORM_FADE_MARGIN * scale
-	var unload_radius := _storm_shell_radius + STORM_UNLOAD_MARGIN * scale
+	var ocean_radius := sea_level()
+	var preload_radius := CyclopsGeometryScript.streaming_radius(ocean_radius, CyclopsGeometryScript.PRELOAD_RATIO)
+	var full_visibility_radius := CyclopsGeometryScript.streaming_radius(ocean_radius, CyclopsGeometryScript.FULL_VISIBILITY_RATIO)
+	var fade_radius := CyclopsGeometryScript.streaming_radius(ocean_radius, CyclopsGeometryScript.FADE_RATIO)
+	var unload_radius := CyclopsGeometryScript.streaming_radius(ocean_radius, CyclopsGeometryScript.UNLOAD_RATIO)
 	var loaded_visibility := 1.0 - smoothstep(full_visibility_radius, fade_radius, camera_distance)
-	var reveal_radius := get_storm_cloud_reveal_radius()
-	var reveal_width := get_storm_cloud_depth() * STORM_TORNADO_REVEAL_RATIO
-	var interior_visibility := 1.0 - smoothstep(reveal_radius - reveal_width, reveal_radius, camera_distance)
-	var visibility := loaded_visibility * interior_visibility
+	var visibility := loaded_visibility * CyclopsGeometryScript.interior_visibility(ocean_radius, camera_distance)
 	if camera_distance <= preload_radius and _storm_interior == null:
 		_set_storm_visibility(visibility)
 		_build_storm_interior()
@@ -1303,6 +1252,7 @@ func _update_storms(delta: float) -> void:
 		var phase := float(rig.get_meta("phase"))
 		var bend_scale := float(rig.get_meta("bend_scale"))
 		var bend_speed := float(rig.get_meta("bend_speed"))
+		var funnel_height := float(rig.get_meta("funnel_height"))
 		for bone_index in 3:
 			var height_weight := float(bone_index + 1) / 3.0
 			var churn := _storm_elapsed * (1.15 + height_weight * 0.72) * STORM_MOTION_SCALE * bend_speed + phase + float(bone_index) * 1.8
@@ -1311,7 +1261,7 @@ func _update_storms(delta: float) -> void:
 				var twist := Quaternion(Vector3.UP, sin(churn * 0.53) * (0.08 + height_weight * 0.15) * bend_scale)
 				rig.set_bone_pose_rotation(bone_index, Basis.from_euler(tilt).get_rotation_quaternion() * twist)
 				var rest_position := rig.get_bone_rest(bone_index).origin
-				rig.set_bone_pose_position(bone_index, rest_position + Vector3(sin(churn * 0.71), 0.0, cos(churn * 0.57)) * height_weight * 0.32 * bend_scale * scale)
+				rig.set_bone_pose_position(bone_index, rest_position + Vector3(sin(churn * 0.71), 0.0, cos(churn * 0.57)) * height_weight * 0.007 * bend_scale * funnel_height)
 				continue
 			var secondary_churn := _storm_elapsed * 0.19 * bend_speed + phase * 1.7 + float(bone_index) * 0.9
 			var tilt := Vector3(sin(churn * 0.43) + sin(secondary_churn) * 0.45, 0.0, cos(churn * 0.37) + cos(secondary_churn * 0.83) * 0.4) * (0.04 + height_weight * 0.085) * bend_scale
@@ -1319,7 +1269,7 @@ func _update_storms(delta: float) -> void:
 			rig.set_bone_pose_rotation(bone_index, Basis.from_euler(tilt).get_rotation_quaternion() * twist)
 			var rest_position := rig.get_bone_rest(bone_index).origin
 			var sway := Vector3(sin(churn * 0.71) + sin(secondary_churn * 1.13) * 0.65, 0.0, cos(churn * 0.57) + cos(secondary_churn) * 0.6)
-			rig.set_bone_pose_position(bone_index, rest_position + sway * height_weight * 0.72 * bend_scale * scale)
+			rig.set_bone_pose_position(bone_index, rest_position + sway * height_weight * 0.016 * bend_scale * funnel_height)
 
 
 func _poll_atmosphere_lut() -> void:
@@ -1771,4 +1721,4 @@ func _core_radius() -> float:
 
 
 func _ocean_level_above_core() -> float:
-	return radius + ocean_level - _core_radius()
+	return sea_level() - _core_radius()

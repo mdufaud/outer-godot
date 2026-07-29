@@ -8,7 +8,8 @@ void fragment() {
 	float radius = length(SCREEN_UV - vec2(0.5));
 	float ring = smoothstep(0.72, 0.18, radius) * smoothstep(0.0, 0.22, radius);
 	float cloud_alpha = cloud_strength;
-	vec3 cloud_color = vec3(0.28, 0.46, 0.42);
+	// Matches tornado.gdshader interior_band_color so the handoff at the deck surface has no flash.
+	vec3 cloud_color = vec3(0.048, 0.115, 0.108);
 	float transition_alpha = ring * strength * 0.24;
 	float combined_alpha = 1.0 - (1.0 - transition_alpha) * (1.0 - cloud_alpha);
 	vec3 combined_color = mix(tint.rgb, cloud_color, clamp(cloud_alpha * 2.0, 0.0, 1.0));

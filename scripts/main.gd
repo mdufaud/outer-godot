@@ -19,8 +19,6 @@ const SUN_GLOW_FADE_FAR_RADII := 24.0
 const PLAYER_SPAWN_CLEARANCE := 3.0
 const BOOT_STALL_WARNING_MS := 10000
 const BOOT_TIMEOUT_MS := 180000
-const CYCLOPS_RAIN_FULL_ALTITUDE := 50.0
-const CYCLOPS_RAIN_FADE_ALTITUDE := 100.0
 
 var player: CharacterBody3D
 var ship: RigidBody3D
@@ -274,10 +272,11 @@ func _update_environment_feedback(delta: float, camera: Camera3D) -> void:
 	transition_material.set_shader_parameter("cloud_strength", _cloud_transition_strength)
 	var rain_target := 0.0
 	if cyclops_source != null:
-		var sea_level: float = float(cyclops_source.get("radius")) + float(cyclops_source.get("ocean_level"))
-		var altitude := camera.global_position.distance_to(cyclops_source.global_position) - sea_level
-		var storm_scale := float(cyclops_source.call("get_storm_scale"))
-		rain_target = (1.0 - smoothstep(CYCLOPS_RAIN_FULL_ALTITUDE * storm_scale, CYCLOPS_RAIN_FADE_ALTITUDE * storm_scale, altitude)) * (1.0 - _underwater_strength)
+		# Rain lives under the cloud deck and clears as you rise through it.
+		var camera_radius := camera.global_position.distance_to(cyclops_source.global_position)
+		var deck_inner := float(cyclops_source.call("get_storm_deck_inner_radius"))
+		var deck_outer := float(cyclops_source.call("get_storm_deck_outer_radius"))
+		rain_target = (1.0 - smoothstep(deck_inner, deck_outer, camera_radius)) * (1.0 - _underwater_strength)
 	_rain_strength = move_toward(_rain_strength, rain_target, delta * 1.2)
 	_rain_overlay.visible = _rain_strength > 0.001
 	(_rain_overlay.material as ShaderMaterial).set_shader_parameter("strength", _rain_strength)

@@ -12,7 +12,6 @@ uniform vec3 interior_highlight_color: source_color = vec3(0.11, 0.25, 0.235);
 uniform vec3 lightning_color: source_color = vec3(0.72, 0.95, 0.9);
 uniform vec3 rim_color: source_color = vec3(0.25, 0.95, 0.82);
 uniform float swirl_speed = 0.018;
-uniform bool exterior_only = false;
 
 varying vec3 v_pos;
 varying vec3 v_local_camera;
@@ -150,9 +149,6 @@ void fragment() {
 	float cloud_highlights = smoothstep(0.68, 0.92, broad_noise * 0.65 + ridge_noise * 0.35);
 
 	bool interior = v_exterior < 0.5;
-	if (exterior_only && interior) {
-		discard;
-	}
 	vec3 base_deep = interior ? interior_deep_color : deep_color;
 	vec3 base_band = interior ? interior_band_color : band_color;
 	vec3 base_storm = interior ? interior_storm_color : storm_color;
