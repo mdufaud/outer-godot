@@ -47,7 +47,15 @@ func _ready() -> void:
 	if celestial_system != null:
 		set_fast_time_enabled(celestial_system.is_fast_forward_enabled())
 	if not Touch.is_touch_ui():
+		call_deferred("_capture_mouse_when_focused")
+
+
+func _capture_mouse_when_focused() -> void:
+	var window := get_window()
+	if window.has_focus():
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	else:
+		window.focus_entered.connect(_capture_mouse_when_focused, CONNECT_ONE_SHOT)
 
 
 func _unhandled_input(event: InputEvent) -> void:
