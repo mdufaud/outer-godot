@@ -56,11 +56,15 @@ func _init() -> void:
 # Mirrors SebLague PlanetEffects.GetMaterials: bodies far to near.
 func update_from_bodies(camera_position: Vector3, candidates: Array) -> void:
 	var bodies: Array = []
+	var camera: Camera3D
 	for body in candidates:
 		if body.has_method("get_ocean_effect_params"):
 			bodies.append(body)
+			if camera == null:
+				camera = body.get_viewport().get_camera_3d()
 	bodies.sort_custom(func(first, second):
 		return _sort_distance(first, camera_position) > _sort_distance(second, camera_position))
+	var frustum: Array[Plane] = camera.get_frustum() if camera != null else []
 
 	var passes := PackedInt32Array()
 	var ocean_data := PackedFloat32Array()
@@ -72,7 +76,8 @@ func update_from_bodies(camera_position: Vector3, candidates: Array) -> void:
 		var ocean_params: PackedFloat32Array = body.get_ocean_effect_params()
 		var ocean_index := -1
 		var camera_underwater := false
-		if display_oceans and not ocean_params.is_empty():
+		if display_oceans and not ocean_params.is_empty() and _sphere_intersects_frustum(
+				Vector3(ocean_params[0], ocean_params[1], ocean_params[2]), ocean_params[3], frustum):
 			ocean_index = ocean_data.size() / OCEAN_FLOATS
 			ocean_data.append_array(ocean_params)
 			camera_underwater = camera_position.distance_squared_to(Vector3(
@@ -81,9 +86,11 @@ func update_from_bodies(camera_position: Vector3, candidates: Array) -> void:
 			passes.append(KIND_OCEAN)
 			passes.append(ocean_index)
 		var lut: Texture2D = body.get_atmosphere_lut_texture()
-		if display_atmospheres and lut != null:
+		var atmosphere_params: PackedFloat32Array = body.get_atmosphere_effect_params() if lut != null else PackedFloat32Array()
+		if display_atmospheres and lut != null and _sphere_intersects_frustum(
+				Vector3(atmosphere_params[0], atmosphere_params[1], atmosphere_params[2]), atmosphere_params[4], frustum):
 			var atmosphere_index := atmosphere_data.size() / ATMOSPHERE_FLOATS
-			atmosphere_data.append_array(body.get_atmosphere_effect_params())
+			atmosphere_data.append_array(atmosphere_params)
 			lut_textures.append(RenderingServer.texture_get_rd_texture(lut.get_rid()))
 			passes.append(KIND_ATMOSPHERE)
 			passes.append(atmosphere_index)
@@ -108,6 +115,13 @@ func clear() -> void:
 
 func _sort_distance(body: Node3D, camera_position: Vector3) -> float:
 	return maxf(0.0, body.global_position.distance_to(camera_position) - float(body.get("radius")))
+
+
+func _sphere_intersects_frustum(centre: Vector3, radius: float, frustum: Array[Plane]) -> bool:
+	for plane in frustum:
+		if plane.distance_to(centre) > radius:
+			return false
+	return true
 
 
 func _notification(what: int) -> void:
@@ -222,7 +236,6 @@ func _build_push_constant(inverse_view_projection: Projection, camera_position: 
 	bytes.encode_s32(88, body_index)
 	bytes.encode_s32(92, 0)
 	return bytes
-
 
 func _scratch_texture(buffers: RenderSceneBuffersRD, size: Vector2i) -> RID:
 	if buffers.has_texture(TEXTURE_CONTEXT, TEXTURE_NAME):

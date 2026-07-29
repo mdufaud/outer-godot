@@ -8,6 +8,7 @@ uniform int ocean_count = 0;
 uniform vec4 ocean_spheres[8];
 uniform bool sun_glow_enabled = true;
 uniform bool sun_pulse_enabled = true;
+uniform float sun_glow_strength: hint_range(0.0, 1.0) = 1.0;
 uniform vec3 sun_glow_color: source_color = vec3(1.0, 0.45, 0.12);
 uniform vec3 sun_glow_outer_color: source_color = vec3(0.62, 0.10, 0.34);
 
@@ -106,7 +107,7 @@ void sky() {
 		vec3 glow = sun_glow_color * pow(sun_dot, 260.0) * 2.4
 			+ sun_glow_color * pow(sun_dot, 42.0) * 0.30
 			+ sun_glow_outer_color * pow(sun_dot, 9.0) * 0.05;
-		col += glow * pulse * ocean_mask * (1.0 - underwater_strength);
+		col += glow * pulse * sun_glow_strength * ocean_mask * (1.0 - underwater_strength);
 	}
 
 	COLOR = col;

@@ -26,6 +26,7 @@ var frame_velocity := Vector3.ZERO
 var frame_position := Vector3.ZERO
 var celestial_system: Node = null
 var _fast_time_enabled := false
+var _fast_time_on_surface := false
 var _stored_velocity := Vector3.ZERO
 
 @onready var camera: Camera3D = $Camera3D
@@ -90,7 +91,7 @@ func _physics_process(delta: float) -> void:
 		camera.rotate_x(-Touch.look_delta.y * MOUSE_SENS)
 		camera.rotation.x = clampf(camera.rotation.x, -1.5, 1.5)
 		Touch.look_delta = Vector2.ZERO
-	if _fast_time_enabled:
+	if _fast_time_enabled and not _fast_time_on_surface:
 		velocity = Vector3.ZERO
 		frame_source = null
 		frame_velocity = Vector3.ZERO
@@ -115,7 +116,7 @@ func _physics_process(delta: float) -> void:
 	var speed := WALK_SPEED * (SPRINT_MULT if Input.is_action_pressed("sprint") else 1.0)
 	var previous_frame_velocity := reference_velocity
 	var frame_offset := Vector3.ZERO
-	if reference_source == frame_source:
+	if reference_source != null and reference_source == frame_source:
 		previous_frame_velocity = frame_velocity
 		frame_offset = reference_source.global_position - frame_position
 	frame_source = reference_source
@@ -181,11 +182,20 @@ func set_fast_time_enabled(enabled: bool) -> void:
 	_fast_time_enabled = enabled
 	if enabled:
 		_stored_velocity = velocity
-		velocity = Vector3.ZERO
-		frame_source = null
-		frame_velocity = Vector3.ZERO
+		var surface_source := Gravity.get_nearest_surface(global_position)
+		_fast_time_on_surface = surface_source != null and _ground_clearance(surface_source) <= GROUND_PROBE_DISTANCE
+		if _fast_time_on_surface:
+			frame_source = surface_source
+			frame_velocity = surface_source.get("orbital_velocity")
+			frame_position = surface_source.global_position
+		else:
+			velocity = Vector3.ZERO
+			frame_source = null
+			frame_velocity = Vector3.ZERO
 	else:
-		velocity = _stored_velocity
+		if not _fast_time_on_surface:
+			velocity = _stored_velocity
+		_fast_time_on_surface = false
 
 
 func _align_to_up(delta: float) -> void:

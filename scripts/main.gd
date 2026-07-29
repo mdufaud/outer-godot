@@ -14,6 +14,8 @@ const SunFXScript := preload("res://scripts/sun_fx.gd")
 
 const SUN_RADIUS := 345.0
 const SUN_SURFACE_GRAVITY := 50.0
+const SUN_GLOW_FADE_NEAR_RADII := 12.0
+const SUN_GLOW_FADE_FAR_RADII := 24.0
 const PLAYER_SPAWN_CLEARANCE := 3.0
 const BOOT_STALL_WARNING_MS := 10000
 const BOOT_TIMEOUT_MS := 180000
@@ -298,7 +300,9 @@ func _update_sky(camera: Camera3D) -> void:
 	if camera == null or _sky_material == null or sun == null:
 		return
 	_sky_material.set_shader_parameter("camera_position", camera.global_position)
-	_sky_material.set_shader_parameter("sun_direction", (sun.global_position - camera.global_position).normalized())
+	var camera_to_sun := sun.global_position - camera.global_position
+	_sky_material.set_shader_parameter("sun_direction", camera_to_sun.normalized())
+	_sky_material.set_shader_parameter("sun_glow_strength", distant_sun_glow_strength(camera_to_sun.length(), float(sun.get("radius"))))
 	var source := Gravity.get_nearest_surface(camera.global_position)
 	var water_depth := float(source.get_water_depth(camera.global_position)) if source != null and source.has_method("get_water_depth") else -INF
 	var sky_occlusion := 1.0 if water_depth > 0.0 else 0.0
@@ -317,6 +321,10 @@ func _update_sky(camera: Camera3D) -> void:
 		if camera.global_position.distance_to(source.global_position) < atmosphere_limit:
 			daylight = smoothstep(-0.08, 0.25, local_up.dot(local_sun))
 	_sky_material.set_shader_parameter("daylight", daylight * (1.0 - sky_occlusion))
+
+
+static func distant_sun_glow_strength(distance_to_center: float, sun_radius: float) -> float:
+	return smoothstep(sun_radius * SUN_GLOW_FADE_NEAR_RADII, sun_radius * SUN_GLOW_FADE_FAR_RADII, distance_to_center)
 
 
 func _build_loading_screen() -> void:
