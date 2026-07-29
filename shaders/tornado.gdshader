@@ -17,6 +17,7 @@ varying vec3 v_pos;
 varying vec3 v_local_camera;
 varying float v_radius;
 varying float v_exterior;
+varying vec3 v_view_up;
 
 float hash3(vec3 p) {
 	p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
@@ -35,8 +36,16 @@ float noise1(float value) {
 	return mix(hash1(cell), hash1(cell + 1.0), blend_value);
 }
 
+vec3 bolt_reference(vec3 axis) {
+	vec3 up = v_view_up;
+	if (abs(dot(up, axis)) > 0.94) {
+		up = abs(axis.y) > 0.82 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+	}
+	return up;
+}
+
 vec3 lightning_direction(float seed, vec3 observer_direction) {
-	vec3 reference = abs(observer_direction.y) > 0.82 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+	vec3 reference = bolt_reference(observer_direction);
 	vec3 tangent_x = normalize(cross(reference, observer_direction));
 	vec3 tangent_y = cross(observer_direction, tangent_x);
 	float offset_x = (hash1(seed + 1.3) * 2.0 - 1.0) * 0.72;
@@ -44,16 +53,33 @@ vec3 lightning_direction(float seed, vec3 observer_direction) {
 	return normalize(observer_direction + tangent_x * offset_x + tangent_y * offset_y);
 }
 
-vec2 lightning_coordinates(vec3 direction, vec3 strike_direction) {
-	vec3 reference = abs(strike_direction.y) > 0.82 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+vec2 lightning_coordinates(vec3 direction, vec3 strike_direction, vec3 observer_direction, float seed) {
+	vec3 reference = bolt_reference(strike_direction);
 	vec3 tangent_x = normalize(cross(reference, strike_direction));
 	vec3 tangent_y = cross(strike_direction, tangent_x);
-	return vec2(dot(direction, tangent_x), dot(direction, tangent_y));
+	vec2 coordinates = vec2(dot(direction, tangent_x), dot(direction, tangent_y));
+	float roll = (hash1(seed + 65.3) * 2.0 - 1.0) * 0.5;
+	if (v_exterior > 0.5) {
+		vec3 radial = strike_direction - observer_direction * dot(strike_direction, observer_direction);
+		float radial_length = length(radial);
+		if (radial_length > 0.02) {
+			radial /= radial_length;
+			roll -= atan(dot(radial, tangent_x), dot(radial, tangent_y));
+		} else {
+			roll += hash1(seed + 71.9) * 6.2831853;
+		}
+	}
+	float cos_roll = cos(roll);
+	float sin_roll = sin(roll);
+	return vec2(
+		coordinates.x * cos_roll - coordinates.y * sin_roll,
+		coordinates.x * sin_roll + coordinates.y * cos_roll
+	);
 }
 
 float lightning_bolt(vec3 direction, vec3 observer_direction, float seed, out float cloud_glow) {
 	vec3 strike_direction = lightning_direction(seed, observer_direction);
-	vec2 coordinates = lightning_coordinates(direction, strike_direction);
+	vec2 coordinates = lightning_coordinates(direction, strike_direction, observer_direction, seed);
 	float depth = dot(direction, strike_direction);
 	float coarse_frequency = mix(18.0, 43.0, hash1(seed + 8.1));
 	float fine_frequency = mix(57.0, 109.0, hash1(seed + 11.7));
@@ -129,6 +155,7 @@ void vertex() {
 	v_local_camera = local_camera;
 	v_radius = length(VERTEX);
 	v_exterior = float(length(local_camera) > length(VERTEX));
+	v_view_up = normalize((inverse(MODEL_MATRIX) * vec4(INV_VIEW_MATRIX[1].xyz, 0.0)).xyz);
 }
 
 void fragment() {
