@@ -79,6 +79,7 @@ static func get_body_definitions() -> Array[Dictionary]:
 				"ocean_depth_multiplier": 7.5, "ocean_alpha_multiplier": 12.0,
 				"ocean_specular_color": Color(0.03, 0.10, 0.095), "atmosphere": false,
 				"ocean_foam_scale": 2.3, "ocean_foam_distance": 1.7, "ocean_refraction_strength": 0.0015,
+				"ocean_swell_height": 2.5, "ocean_swell_wavelength": 34.0, "ocean_swell_speed": 0.55,
 				"underwater_tint": Color(0.004, 0.045, 0.05), "underwater_darkness": 0.72,
 			},
 		},

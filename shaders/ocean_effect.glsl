@@ -22,6 +22,7 @@ struct OceanBody {
 	vec4 wave;
 	vec4 foam;
 	vec4 underwater;
+	vec4 swell;
 	vec4 storm_contacts[9];
 };
 
@@ -36,6 +37,67 @@ layout(push_constant, std430) uniform Params {
 } params;
 
 const float MAX_DISTANCE = 1000000.0;
+const float TAU = 6.28318530718;
+const vec3 SWELL_AXIS = vec3(0.4211, 0.8321, -0.3609);
+const vec3 SWELL_DIRECTION_A = vec3(0.7783, 0.1896, 0.5987);
+const vec3 SWELL_DIRECTION_B = vec3(-0.3109, 0.6620, 0.6820);
+
+float swell_hash(vec3 cell) {
+	vec3 scrambled = fract(cell * 0.1031);
+	scrambled += dot(scrambled, scrambled.yzx + 33.33);
+	return fract((scrambled.x + scrambled.y) * scrambled.z);
+}
+
+float swell_noise(vec3 position) {
+	vec3 cell = floor(position);
+	vec3 local = fract(position);
+	local = local * local * (3.0 - 2.0 * local);
+	float n000 = swell_hash(cell);
+	float n100 = swell_hash(cell + vec3(1.0, 0.0, 0.0));
+	float n010 = swell_hash(cell + vec3(0.0, 1.0, 0.0));
+	float n110 = swell_hash(cell + vec3(1.0, 1.0, 0.0));
+	float n001 = swell_hash(cell + vec3(0.0, 0.0, 1.0));
+	float n101 = swell_hash(cell + vec3(1.0, 0.0, 1.0));
+	float n011 = swell_hash(cell + vec3(0.0, 1.0, 1.0));
+	float n111 = swell_hash(cell + vec3(1.0, 1.0, 1.0));
+	return mix(
+		mix(mix(n000, n100, local.x), mix(n010, n110, local.x), local.y),
+		mix(mix(n001, n101, local.x), mix(n011, n111, local.x), local.y),
+		local.z
+	);
+}
+
+// Rodrigues rotation. The swell octaves advect by rotating the sample direction
+// rather than translating it, so the noise coordinates stay bounded no matter
+// how long the session runs.
+vec3 rotate_about(vec3 direction, vec3 axis, float angle) {
+	float cosine = cos(angle);
+	float sine = sin(angle);
+	return direction * cosine + cross(axis, direction) * sine + axis * dot(axis, direction) * (1.0 - cosine);
+}
+
+// Signed [-1, 1] swell profile: two travelling plane-wave trains give the crests
+// a direction, an FBM breaks them up. Zero mean, so the average ocean radius is
+// exactly the radius physics uses.
+float swell_field(vec3 position, float wavenumber, float phase) {
+	vec3 direction = normalize(position);
+	float train_a = sin(dot(position, SWELL_DIRECTION_A) * wavenumber - phase);
+	float train_b = sin(dot(position, SWELL_DIRECTION_B) * wavenumber * 1.63 - phase * 1.37);
+	float frequency = length(position) * wavenumber;
+	float rate = phase * 0.05;
+	float weight = 1.0;
+	float total = 0.0;
+	float normalisation = 0.0;
+	for (int octave = 0; octave < 3; octave++) {
+		total += swell_noise(rotate_about(direction, SWELL_AXIS, rate) * frequency) * weight;
+		normalisation += weight;
+		frequency *= 2.13;
+		rate *= -1.63;
+		weight *= 0.5;
+	}
+	float detail = total / normalisation * 2.0 - 1.0;
+	return train_a * 0.46 + train_b * 0.28 + detail * 0.26;
+}
 
 vec2 ray_sphere(vec3 centre, float radius, vec3 origin, vec3 direction) {
 	vec3 offset = origin - centre;
@@ -171,14 +233,28 @@ void main() {
 	float exterior_murk = body.foam.z;
 	vec3 underwater_tint = body.underwater.rgb;
 	float underwater_darkness = body.underwater.w;
+	float swell_amplitude = body.swell.x;
+	float swell_wavenumber = TAU / max(body.swell.y, 1.0);
 	float time = params.camera_position.w;
+	float swell_phase = time * body.swell.z;
 
 	vec2 ndc = screen_uv * 2.0 - 1.0;
 	vec4 near_point = params.inverse_view_projection * vec4(ndc, 1.0, 1.0);
 	vec3 camera_position = params.camera_position.xyz;
 	vec3 ray_direction = normalize(near_point.xyz / near_point.w - camera_position);
 
-	vec2 hit = ray_sphere(planet_centre, ocean_radius, camera_position, ray_direction);
+	// Traced against the crest sphere, then relaxed down onto the displaced
+	// radius, so the swell owns the silhouette instead of being painted on a
+	// mathematically perfect arc.
+	vec3 camera_offset = camera_position - planet_centre;
+	float camera_surface_radius = ocean_radius;
+	if (swell_amplitude > 0.0) {
+		camera_surface_radius += swell_amplitude * swell_field(
+			normalize(camera_offset) * ocean_radius, swell_wavenumber, swell_phase
+		);
+	}
+	float trace_radius = ocean_radius + swell_amplitude;
+	vec2 hit = ray_sphere(planet_centre, trace_radius, camera_position, ray_direction);
 	float scene_distance_value = scene_distance(screen_uv);
 	float ocean_depth = min(hit.y, scene_distance_value - hit.x);
 	if (ocean_depth <= 0.0) {
@@ -191,39 +267,75 @@ void main() {
 	// the surface. Swapping to the far hit jumps the shading point to the other
 	// side of the planet, past the terminator, and blacks out the sea bed.
 	float surface_distance = hit.x;
+	float far_distance = hit.x + hit.y;
+	if (swell_amplitude > 0.0 && length(camera_offset) > camera_surface_radius) {
+		for (int relaxation = 0; relaxation < 3; relaxation++) {
+			vec3 probe = camera_position + ray_direction * surface_distance - planet_centre;
+			float probe_radius = length(probe);
+			vec3 probe_normal = probe / max(probe_radius, 0.0001);
+			float target_radius = ocean_radius + swell_amplitude * swell_field(probe, swell_wavenumber, swell_phase);
+			// Newton step along the ray. The slope clamp keeps grazing rays from
+			// exploding; the delta clamp keeps them inside the traced shell, so a
+			// ray that skims over a trough walks past the far exit and is dropped
+			// below instead of reporting a false hit.
+			float slope = min(dot(ray_direction, probe_normal), -0.05);
+			surface_distance += clamp((target_radius - probe_radius) / slope, -hit.y, hit.y);
+		}
+		surface_distance = max(surface_distance, hit.x);
+		ocean_depth = min(far_distance, scene_distance_value) - surface_distance;
+		if (ocean_depth <= 0.0) {
+			imageStore(destination_color, coordinate, vec4(source, 1.0));
+			return;
+		}
+	}
 	vec3 intersection = camera_position + ray_direction * surface_distance - planet_centre;
 	vec2 pixel_size = 1.0 / vec2(size);
 	vec3 ray_direction_x = ray_direction_at(screen_uv + vec2(pixel_size.x, 0.0), camera_position);
 	vec3 ray_direction_y = ray_direction_at(screen_uv + vec2(0.0, pixel_size.y), camera_position);
-	vec2 hit_x = ray_sphere(planet_centre, ocean_radius, camera_position, ray_direction_x);
-	vec2 hit_y = ray_sphere(planet_centre, ocean_radius, camera_position, ray_direction_y);
+	vec2 hit_x = ray_sphere(planet_centre, trace_radius, camera_position, ray_direction_x);
+	vec2 hit_y = ray_sphere(planet_centre, trace_radius, camera_position, ray_direction_y);
 	vec3 intersection_x = camera_position + ray_direction_x * hit_x.x - planet_centre;
 	vec3 intersection_y = camera_position + ray_direction_y * hit_y.x - planet_centre;
 	float world_footprint = max(length(intersection_x - intersection), length(intersection_y - intersection));
 	// Reference: SebLague dstAboveWater — measured at the near plane, so it is a
 	// per-pixel test. A camera-wide bool flips the whole screen at once and makes
 	// the image slam when the waterline sits mid-screen.
-	float depth_above_water = length(near_point.xyz / near_point.w - planet_centre) - ocean_radius;
+	float depth_above_water = length(near_point.xyz / near_point.w - planet_centre) - camera_surface_radius;
 	float above_water = smoothstep(-0.01, 0.01, depth_above_water);
 	vec3 sphere_normal = normalize(intersection);
+	// Swell normal from a two-tap gradient of the same field the trace relaxed
+	// against, so the shading agrees with the displaced geometry.
+	vec3 surface_normal = sphere_normal;
+	if (swell_amplitude > 0.0) {
+		vec3 reference_axis = abs(sphere_normal.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+		vec3 tangent = normalize(cross(sphere_normal, reference_axis));
+		vec3 bitangent = cross(sphere_normal, tangent);
+		float gradient_step = max(TAU / swell_wavenumber * 0.06, 0.05);
+		float height_centre = swell_field(intersection, swell_wavenumber, swell_phase);
+		float height_tangent = swell_field(intersection + tangent * gradient_step, swell_wavenumber, swell_phase);
+		float height_bitangent = swell_field(intersection + bitangent * gradient_step, swell_wavenumber, swell_phase);
+		vec3 gradient = (tangent * (height_tangent - height_centre) + bitangent * (height_bitangent - height_centre))
+			* swell_amplitude / gradient_step;
+		surface_normal = normalize(sphere_normal - gradient);
+	}
 	float normal_scale = wave_scale / max(planet_scale, 0.00001);
 	float wave_time = time * wave_speed * 0.05;
 	vec2 offset_a = vec2(wave_time, wave_time * 0.8);
 	vec2 offset_b = vec2(wave_time * -0.8, wave_time * -0.3);
 	float normal_lod = texture_lod(world_footprint, normal_scale, wave_normal_a);
-	vec3 normal_a = triplanar_normal(intersection, sphere_normal, normal_scale, offset_a, normal_lod, wave_normal_a);
+	vec3 normal_a = triplanar_normal(intersection, surface_normal, normal_scale, offset_a, normal_lod, wave_normal_a);
 	vec3 detail_normal = triplanar_normal(intersection, normal_a, normal_scale, offset_b, normal_lod, wave_normal_b);
-	vec3 wave_normal = normalize(mix(sphere_normal, detail_normal, clamp(wave_strength, 0.0, 1.0)));
+	vec3 wave_normal = normalize(mix(surface_normal, detail_normal, clamp(wave_strength, 0.0, 1.0)));
 	vec3 ray_right = normalize(ray_direction_x - ray_direction);
 	vec3 ray_up = normalize(ray_direction_y - ray_direction);
-	vec3 wave_delta = wave_normal - sphere_normal;
+	vec3 wave_delta = wave_normal - surface_normal;
 	vec2 underwater_offset = vec2(dot(wave_delta, ray_right), dot(wave_delta, ray_up));
 	float specular_wave_strength = clamp(wave_strength * exp2(-4.0 * normal_lod), 0.0, 1.0);
-	vec3 specular_normal = normalize(mix(sphere_normal, detail_normal, specular_wave_strength));
+	vec3 specular_normal = normalize(mix(surface_normal, detail_normal, specular_wave_strength));
 	float depth_blend = 1.0 - exp(-ocean_depth / max(planet_scale, 0.00001) * depth_multiplier);
 	float alpha = 1.0 - exp(-ocean_depth / max(planet_scale, 0.00001) * alpha_multiplier);
 	vec3 ocean_colour = mix(shallow_colour, deep_colour, depth_blend);
-	float diffuse_lighting = max(dot(sphere_normal, normalize(sun_direction)), 0.0);
+	float diffuse_lighting = max(dot(surface_normal, normalize(sun_direction)), 0.0);
 	float wrapped_light = clamp(dot(wave_normal, normalize(sun_direction)) * 0.35 + 0.65, 0.0, 1.0);
 	float cloud_diffusion = 0.72 + 0.28 * sin(dot(sphere_normal, vec3(9.1, 13.7, 7.3)) + time * 0.18);
 	vec3 scattered_sky = ambient_colour * ambient_strength * mix(wrapped_light, cloud_diffusion, sky_diffusion);
@@ -233,7 +345,7 @@ void main() {
 	vec3 lit_ocean = ocean_colour * diffuse_lighting + scattered_sky + specular_colour * specular_highlight;
 	float shore = 1.0 - smoothstep(0.0, max(foam_distance, 0.001), ocean_depth);
 	float foam_lod = texture_lod(world_footprint, foam_scale / max(planet_scale, 0.00001), foam_texture);
-	float foam_noise = triplanar_foam(intersection / max(planet_scale, 0.00001), sphere_normal, foam_scale, offset_a * 0.35, foam_lod);
+	float foam_noise = triplanar_foam(intersection / max(planet_scale, 0.00001), surface_normal, foam_scale, offset_a * 0.35, foam_lod);
 	float leading_edge = smoothstep(0.02, 0.35, ocean_depth / max(foam_distance, 0.001));
 	float foam = shore * leading_edge * smoothstep(0.24, 0.78, 1.0 - foam_noise) * above_water * (1.0 - exterior_murk);
 	lit_ocean = mix(lit_ocean, foam_colour * (0.65 + 0.35 * diffuse_lighting), foam);
@@ -244,7 +356,7 @@ void main() {
 	lit_ocean += shallow_colour * wave_slope * wave_light * exterior_murk * above_water * 0.28;
 	float refraction_fade = shore * (1.0 - smoothstep(0.0, planet_scale * 4.0, surface_distance)) * above_water;
 	vec2 refraction_uv = clamp(screen_uv + wave_normal.xy * refraction_strength * refraction_fade, vec2(0.001), vec2(0.999));
-	if (scene_distance(refraction_uv) < hit.x) {
+	if (scene_distance(refraction_uv) < surface_distance) {
 		refraction_uv = screen_uv;
 	}
 	vec3 refracted_scene = texture(source_color, refraction_uv).rgb;
@@ -306,7 +418,7 @@ void main() {
 	underwater_scene += caustic_colour * caustic_pattern * receiver_light * caustic_fade * receiver_is_scene * 0.085;
 
 	float optical_distance = ocean_depth / max(planet_scale * 0.1, 1.0);
-	float camera_depth = max(ocean_radius - length(camera_position - planet_centre), 0.0);
+	float camera_depth = max(camera_surface_radius - length(camera_offset), 0.0);
 	vec3 camera_up = normalize(camera_position - planet_centre);
 	float daylight = smoothstep(-0.08, 0.35, dot(camera_up, normalize(sun_direction)));
 	float forward_scattering = pow(max(dot(ray_direction, normalize(sun_direction)), 0.0), 10.0);

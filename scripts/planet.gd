@@ -70,6 +70,9 @@ static var _topology_mutex := Mutex.new()
 @export var ocean_foam_scale := 1.4
 @export var ocean_foam_distance := 0.9
 @export var ocean_refraction_strength := 0.003
+@export var ocean_swell_height := 0.0
+@export var ocean_swell_wavelength := 40.0
+@export var ocean_swell_speed := 0.6
 @export var underwater_tint := Color(0.1, 0.4, 0.5)
 @export var underwater_darkness := 0.45
 @export var has_atmosphere := true
@@ -498,9 +501,11 @@ func _build_ocean() -> void:
 		return
 	var foam_distance := ocean_foam_distance
 	var refraction_strength := ocean_refraction_strength
+	var swell_height := ocean_swell_height
 	if quality_profile == "mobile_low":
 		foam_distance = ocean_foam_distance * 0.65
 		refraction_strength = 0.0
+		swell_height = 0.0
 	var ambient_color := Color(0.0, 0.0, 0.0)
 	var ambient_strength := 0.0
 	var sky_diffusion := 0.0
@@ -519,6 +524,7 @@ func _build_ocean() -> void:
 		ocean_wave_strength, ocean_wave_scale, ocean_wave_speed, refraction_strength,
 		ocean_foam_scale, foam_distance, 1.0 if body_kind == "cyclops" else 0.0, 0.0,
 		underwater_tint.r, underwater_tint.g, underwater_tint.b, underwater_darkness,
+		swell_height, ocean_swell_wavelength, ocean_swell_speed, 0.0,
 	])
 	for index in STORM_CONTACT_COUNT:
 		_ocean_params.append_array(PackedFloat32Array([0.0, 0.0, 0.0, 0.0]))
@@ -1367,7 +1373,7 @@ func _refresh_effect_transform_params() -> void:
 		_ocean_params[5] = direction.y
 		_ocean_params[6] = direction.z
 		for index in STORM_CONTACT_COUNT:
-			var offset := 40 + index * 4
+			var offset := 44 + index * 4
 			if index < _storm_contacts.size() and is_instance_valid(_storm_contacts[index]):
 				var contact := _storm_contacts[index]
 				var contact_position := contact.global_position
