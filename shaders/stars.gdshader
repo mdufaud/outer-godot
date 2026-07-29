@@ -4,6 +4,7 @@ uniform vec3 camera_position = vec3(0.0);
 uniform vec3 sun_direction = vec3(1.0, 0.0, 0.0);
 uniform float daylight = 0.0;
 uniform float underwater_strength = 0.0;
+uniform float storm_occlusion = 0.0;
 uniform int ocean_count = 0;
 uniform vec4 ocean_spheres[8];
 uniform bool sun_glow_enabled = true;
@@ -98,7 +99,7 @@ void sky() {
 		}
 	}
 	float sun_fade = 1.0 - smoothstep(0.65, 0.995, dot(dir, normalize(sun_direction)));
-	stars *= ocean_mask * sun_fade * (1.0 - daylight * 0.96) * (1.0 - underwater_strength);
+	stars *= ocean_mask * sun_fade * (1.0 - daylight * 0.96) * (1.0 - underwater_strength) * (1.0 - storm_occlusion);
 	col += stars;
 
 	if (sun_glow_enabled) {

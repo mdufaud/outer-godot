@@ -19,6 +19,8 @@ const SUN_GLOW_FADE_FAR_RADII := 24.0
 const PLAYER_SPAWN_CLEARANCE := 3.0
 const BOOT_STALL_WARNING_MS := 10000
 const BOOT_TIMEOUT_MS := 180000
+const CYCLOPS_RAIN_FULL_ALTITUDE := 50.0
+const CYCLOPS_RAIN_FADE_ALTITUDE := 100.0
 
 var player: CharacterBody3D
 var ship: RigidBody3D
@@ -46,6 +48,7 @@ var _was_in_atmosphere := false
 var _feedback_initialized := false
 var _transition_tint: ColorRect
 var _transition_strength := 0.0
+var _cloud_transition_strength := 0.0
 var _rain_overlay: ColorRect
 var _rain_strength := 0.0
 var _loaded := false
@@ -233,6 +236,7 @@ func _update_environment_feedback(delta: float, camera: Camera3D) -> void:
 	var source := Gravity.get_nearest_surface(camera.global_position)
 	if source == null:
 		source = Gravity.get_strongest(camera.global_position)
+	var cyclops_source := _get_cyclops_source(camera.global_position)
 	var water_depth := float(source.get_water_depth(camera.global_position)) if source != null and source.has_method("get_water_depth") else -INF
 	var distance_to_surface := absf(water_depth) if is_finite(water_depth) else INF
 	var ocean_target := 0.0
@@ -263,16 +267,33 @@ func _update_environment_feedback(delta: float, camera: Camera3D) -> void:
 	_was_underwater = underwater
 	_was_in_atmosphere = in_atmosphere
 	_transition_strength = move_toward(_transition_strength, 0.0, delta * 1.8)
-	_transition_tint.visible = _transition_strength > 0.001
-	(_transition_tint.material as ShaderMaterial).set_shader_parameter("strength", _transition_strength)
+	_cloud_transition_strength = float(cyclops_source.call("get_storm_cloud_transition", camera.global_position)) if cyclops_source != null else 0.0
+	_transition_tint.visible = _transition_strength > 0.001 or _cloud_transition_strength > 0.001
+	var transition_material := _transition_tint.material as ShaderMaterial
+	transition_material.set_shader_parameter("strength", _transition_strength)
+	transition_material.set_shader_parameter("cloud_strength", _cloud_transition_strength)
 	var rain_target := 0.0
-	if source != null and source.get("body_kind") == "cyclops":
-		var sea_level: float = float(source.get("radius")) + float(source.get("ocean_level"))
-		var altitude := camera.global_position.distance_to(source.global_position) - sea_level
-		rain_target = clampf(1.0 - altitude / 90.0, 0.0, 1.0) * (1.0 - _underwater_strength)
+	if cyclops_source != null:
+		var sea_level: float = float(cyclops_source.get("radius")) + float(cyclops_source.get("ocean_level"))
+		var altitude := camera.global_position.distance_to(cyclops_source.global_position) - sea_level
+		var storm_scale := float(cyclops_source.call("get_storm_scale"))
+		rain_target = (1.0 - smoothstep(CYCLOPS_RAIN_FULL_ALTITUDE * storm_scale, CYCLOPS_RAIN_FADE_ALTITUDE * storm_scale, altitude)) * (1.0 - _underwater_strength)
 	_rain_strength = move_toward(_rain_strength, rain_target, delta * 1.2)
 	_rain_overlay.visible = _rain_strength > 0.001
 	(_rain_overlay.material as ShaderMaterial).set_shader_parameter("strength", _rain_strength)
+
+
+func _get_cyclops_source(camera_position: Vector3) -> Node3D:
+	var nearest: Node3D = null
+	var nearest_distance := INF
+	for body in get_tree().get_nodes_in_group("celestial_body"):
+		if not is_instance_valid(body) or body.get("body_kind") != "cyclops":
+			continue
+		var distance := (body as Node3D).global_position.distance_squared_to(camera_position)
+		if distance < nearest_distance:
+			nearest = body
+			nearest_distance = distance
+	return nearest
 
 
 func _trigger_environment_transition(camera: Camera3D, tint: Color, shake_strength: float, duration: float) -> void:
@@ -325,6 +346,9 @@ func _update_sky(camera: Camera3D) -> void:
 	var camera_to_sun := sun.global_position - camera.global_position
 	_sky_material.set_shader_parameter("sun_direction", camera_to_sun.normalized())
 	_sky_material.set_shader_parameter("sun_glow_strength", distant_sun_glow_strength(camera_to_sun.length(), float(sun.get("radius"))))
+	var cyclops_source := _get_cyclops_source(camera.global_position)
+	var storm_occlusion := float(cyclops_source.call("get_storm_sky_occlusion", camera.global_position)) if cyclops_source != null else 0.0
+	_sky_material.set_shader_parameter("storm_occlusion", storm_occlusion)
 	var source := Gravity.get_nearest_surface(camera.global_position)
 	var water_depth := float(source.get_water_depth(camera.global_position)) if source != null and source.has_method("get_water_depth") else -INF
 	var sky_occlusion := 1.0 if water_depth > 0.0 else 0.0

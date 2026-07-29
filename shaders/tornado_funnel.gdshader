@@ -8,6 +8,10 @@ uniform float phase = 0.0;
 uniform float layer_offset = 0.0;
 uniform float radial_scale = 1.0;
 uniform float opacity = 0.9;
+uniform float shape_seed = 0.0;
+uniform float shape_change_amount = 1.0;
+uniform float sway_strength = 1.0;
+uniform float pulse_strength = 0.1;
 
 varying float height_fraction;
 varying float angular_position;
@@ -24,24 +28,34 @@ float wave_noise(vec3 value) {
 void vertex() {
 	height_fraction = UV.y;
 	crown_mask = COLOR.a;
+	float animation_time = TIME;
+	float noise_seed = mix(phase, shape_seed, shape_change_amount);
 	float angle = atan(VERTEX.z, VERTEX.x);
 	float joint_phase = dot(COLOR.rgb, vec3(0.0, 1.7, 3.8));
-	float spin = TIME * (2.35 + layer_offset * 0.64) + phase + height_fraction * 9.0 + joint_phase;
-	float coarse = wave_noise(vec3(angle * 2.1, height_fraction * 8.0 - TIME * 0.68, phase + layer_offset));
-	float fine = wave_noise(vec3(angle * 5.7 + TIME, height_fraction * 19.0, phase * 1.9));
+	float spin = animation_time * (2.35 + layer_offset * 0.64) + phase + height_fraction * 9.0 + joint_phase;
+	float coarse = wave_noise(vec3(angle * 2.1, height_fraction * 8.0 - animation_time * 0.68, noise_seed + layer_offset));
+	float fine = wave_noise(vec3(angle * 5.7 + animation_time, height_fraction * 19.0, noise_seed * 1.9));
 	float displacement = coarse * mix(0.42, 1.55, crown_mask) + fine * 0.34;
 	vec2 radial_direction = normalize(VERTEX.xz);
 	VERTEX.xz *= radial_scale;
 	VERTEX.xz += radial_direction * displacement;
+	float slow_change = wave_noise(vec3(height_fraction * 3.7 + shape_seed, animation_time * 0.24, shape_seed * 0.31));
+	VERTEX.xz *= 1.0 + slow_change * pulse_strength * smoothstep(0.05, 0.95, height_fraction) * shape_change_amount;
+	vec2 slow_sway = vec2(
+		sin(animation_time * 0.43 + height_fraction * 4.1 + shape_seed),
+		cos(animation_time * 0.36 + height_fraction * 3.3 + shape_seed * 1.37)
+	);
+	VERTEX.xz += slow_sway * (0.18 + height_fraction * height_fraction * 1.35) * sway_strength * shape_change_amount;
 	VERTEX.xz += vec2(sin(spin), cos(spin * 0.83)) * (0.12 + height_fraction * height_fraction * 0.72);
 	angular_position = angle + spin * 0.18;
 	churn_value = coarse * 0.63 + fine * 0.37;
 }
 
 void fragment() {
-	float descending_band = sin(angular_position * 1.35 - height_fraction * 58.0 + TIME * (5.4 + layer_offset * 1.1) + phase);
-	float broken_band = sin(angular_position * 4.2 + height_fraction * 17.0 - TIME * 2.3 + churn_value * 2.6);
-	float broad_mass = sin(angular_position * 0.72 - height_fraction * 21.0 + TIME * 1.8 + phase * 0.6);
+	float animation_time = TIME;
+	float descending_band = sin(angular_position * 1.35 - height_fraction * 58.0 + animation_time * (5.4 + layer_offset * 1.1) + phase);
+	float broken_band = sin(angular_position * 4.2 + height_fraction * 17.0 - animation_time * 2.3 + churn_value * 2.6);
+	float broad_mass = sin(angular_position * 0.72 - height_fraction * 21.0 + animation_time * 1.8 + phase * 0.6);
 	float density = smoothstep(-0.52, 0.72, descending_band + broken_band * 0.34 + churn_value * 0.55);
 	density = mix(density, smoothstep(-0.78, 0.45, broad_mass + churn_value), crown_mask * 0.42);
 	float height_fade = smoothstep(0.0, 0.018, height_fraction) * (1.0 - smoothstep(0.975, 1.0, height_fraction));
