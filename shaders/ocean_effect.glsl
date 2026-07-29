@@ -305,18 +305,29 @@ void main() {
 	vec3 caustic_colour = mix(vec3(0.72, 0.9, 1.0), normalize(underwater_tint + 0.001), 0.28);
 	underwater_scene += caustic_colour * caustic_pattern * receiver_light * caustic_fade * receiver_is_scene * 0.085;
 
-	float tint_peak = max(max(underwater_tint.r, underwater_tint.g), underwater_tint.b);
-	vec3 tint_ratio = underwater_tint / max(tint_peak, 0.001);
-	vec3 absorption = mix(vec3(2.3), vec3(0.28), tint_ratio) * mix(0.75, 1.8, underwater_darkness);
 	float optical_distance = ocean_depth / max(planet_scale * 0.1, 1.0);
-	vec3 transmission = exp(-absorption * optical_distance);
 	float camera_depth = max(ocean_radius - length(camera_position - planet_centre), 0.0);
 	vec3 camera_up = normalize(camera_position - planet_centre);
 	float daylight = smoothstep(-0.08, 0.35, dot(camera_up, normalize(sun_direction)));
-	float surface_light = exp(-camera_depth / max(planet_scale * 0.16, 1.0) * mix(1.0, 2.6, underwater_darkness));
-	vec3 scattering_colour = underwater_tint * (0.12 + 0.88 * daylight * surface_light);
 	float forward_scattering = pow(max(dot(ray_direction, normalize(sun_direction)), 0.0), 10.0);
-	scattering_colour += caustic_colour * forward_scattering * daylight * surface_light * 0.04;
+	vec3 absorption;
+	float surface_light;
+	vec3 scattering_colour;
+	if (exterior_murk > 0.5) {
+		float tint_peak = max(max(underwater_tint.r, underwater_tint.g), underwater_tint.b);
+		vec3 tint_ratio = underwater_tint / max(tint_peak, 0.001);
+		absorption = mix(vec3(2.3), vec3(0.28), tint_ratio) * mix(0.75, 1.8, underwater_darkness);
+		surface_light = exp(-camera_depth / max(planet_scale * 0.16, 1.0) * mix(1.0, 2.6, underwater_darkness));
+		scattering_colour = underwater_tint * (0.12 + 0.88 * daylight * surface_light);
+		scattering_colour += caustic_colour * forward_scattering * daylight * surface_light * 0.04;
+	} else {
+		absorption = mix(vec3(0.82), vec3(0.34), clamp(underwater_tint, vec3(0.0), vec3(1.0)));
+		absorption *= mix(0.42, 0.82, underwater_darkness);
+		surface_light = exp(-camera_depth / max(planet_scale * 0.28, 1.0) * mix(0.55, 1.1, underwater_darkness));
+		scattering_colour = underwater_tint * (0.28 + 0.72 * daylight * surface_light);
+		scattering_colour += caustic_colour * forward_scattering * daylight * surface_light * 0.055;
+	}
+	vec3 transmission = exp(-absorption * optical_distance);
 	vec3 underwater_colour = underwater_scene * transmission + scattering_colour * (vec3(1.0) - transmission);
 	imageStore(destination_color, coordinate, vec4(mix(surface_colour, underwater_colour, underwater_amount), 1.0));
 }

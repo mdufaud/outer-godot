@@ -10,7 +10,7 @@ static func get_body_definitions() -> Array[Dictionary]:
 			"data": {
 				"body_kind": "earth", "radius": 46.0, "gravity": 8.0, "seed": 93847, "ocean": true, "atmosphere": true,
 				"ocean_foam_scale": 1.6, "ocean_foam_distance": 0.85, "ocean_refraction_strength": 0.0025,
-				"underwater_tint": Color(0.02, 0.32, 0.70), "underwater_darkness": 0.32,
+				"underwater_tint": Color(0.02, 0.38, 0.78), "underwater_darkness": 0.22,
 			},
 		},
 		{
@@ -60,7 +60,7 @@ static func get_body_definitions() -> Array[Dictionary]:
 				"ocean_wave_scale": 20.0, "ocean_wave_speed": 0.5, "ocean_smoothness": 0.882,
 				"ocean_depth_multiplier": 15.0, "ocean_alpha_multiplier": 70.0,
 				"ocean_foam_scale": 1.8, "ocean_foam_distance": 1.1, "ocean_refraction_strength": 0.002,
-				"underwater_tint": Color(0.04, 0.44, 0.55), "underwater_darkness": 0.50,
+				"underwater_tint": Color(0.0, 0.68, 1.0), "underwater_darkness": 0.30,
 				"atmosphere": true, "atmosphere_scale": 0.588, "atmosphere_density_falloff": 6.0,
 				"atmosphere_wavelengths": Vector3(678.0, 815.8, 479.9),
 				"atmosphere_scattering_strength": 26.51, "atmosphere_intensity": 0.25,
