@@ -586,6 +586,7 @@ func _build_storm_interior() -> void:
 			skeleton.set_bone_rest(bone_index, Transform3D(Basis.IDENTITY, Vector3(0.0, bone_height, 0.0)))
 		funnel_root.add_child(skeleton)
 		var funnel_mesh := _build_tornado_mesh(funnel_height, base_radius, trunk_radius, crown_radius, base_phase, shape_kind)
+		var skirt_mesh := _build_storm_skirt_mesh(funnel_height, base_radius, base_phase, shape_kind)
 		var skin := skeleton.create_skin_from_rest_transforms()
 		for layer in 3:
 			var funnel := MeshInstance3D.new()
@@ -609,6 +610,17 @@ func _build_storm_interior() -> void:
 			funnel.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			skeleton.add_child(funnel)
 			_storm_funnel_materials.append(funnel_material)
+			var skirt := MeshInstance3D.new()
+			skirt.name = ["SkirtCore", "SkirtMist", "SkirtVapour"][layer]
+			skirt.mesh = skirt_mesh
+			skirt.position.y = -funnel_height * 0.5
+			skirt.material_override = funnel_material
+			skirt.custom_aabb = AABB(
+				Vector3(-base_radius * 5.0, -2.0, -base_radius * 5.0),
+				Vector3(base_radius * 10.0, funnel_height * 0.35, base_radius * 10.0)
+			)
+			skirt.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			funnel_root.add_child(skirt)
 		var contact := Area3D.new()
 		contact.name = "WaterDisplacementVolume"
 		contact.position.y = -funnel_height * 0.5 + 0.4
@@ -659,17 +671,7 @@ func _build_tornado_mesh(funnel_height: float, base_radius: float, trunk_radius:
 			crown_blend = smoothstep(0.72, 0.95, height_fraction)
 		var body_radius := lerpf(base_radius, trunk_radius, body_blend)
 		var profile_radius := lerpf(body_radius, crown_radius, crown_blend)
-		var centre := Vector2.ZERO
-		match shape_kind:
-			0:
-				centre = Vector2(sin(height_fraction * 5.0), cos(height_fraction * 4.0)) * height_fraction * 0.25
-			1:
-				centre = Vector2(sin(height_fraction * 6.2), cos(height_fraction * 4.7)) * height_fraction * height_fraction * 1.5
-			2:
-				centre = Vector2(smoothstep(0.0, 1.0, height_fraction) * 7.5, sin(height_fraction * PI) * 1.5)
-			3:
-				centre = Vector2(sin(height_fraction * TAU) * 8.5, sin(height_fraction * PI) * 1.2)
-		centre = centre.rotated(phase)
+		var centre := _tornado_centre_offset(height_fraction, phase, shape_kind)
 		var lower_weight := clampf(1.0 - height_fraction * 2.0, 0.0, 1.0)
 		var middle_weight := 1.0 - absf(height_fraction - 0.5) * 2.0
 		var upper_weight := clampf(height_fraction * 2.0 - 1.0, 0.0, 1.0)
@@ -703,6 +705,66 @@ func _build_tornado_mesh(funnel_height: float, base_radius: float, trunk_radius:
 	arrays[Mesh.ARRAY_TEX_UV] = uvs
 	arrays[Mesh.ARRAY_BONES] = bones
 	arrays[Mesh.ARRAY_WEIGHTS] = weights
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+func _tornado_centre_offset(height_fraction: float, phase: float, shape_kind: int) -> Vector2:
+	var centre := Vector2.ZERO
+	match shape_kind:
+		0:
+			centre = Vector2(sin(height_fraction * 5.0), cos(height_fraction * 4.0)) * height_fraction * 0.25
+		1:
+			centre = Vector2(sin(height_fraction * 6.2), cos(height_fraction * 4.7)) * height_fraction * height_fraction * 1.5
+		2:
+			centre = Vector2(smoothstep(0.0, 1.0, height_fraction) * 7.5, sin(height_fraction * PI) * 1.5)
+		3:
+			centre = Vector2(sin(height_fraction * TAU) * 8.5, sin(height_fraction * PI) * 1.2)
+	return centre.rotated(phase)
+
+
+# Flared foot for the funnel: same shader, same UV.y scale and same lateral drift,
+# so it reads as the funnel surface widening into the sea rather than a second effect.
+func _build_storm_skirt_mesh(funnel_height: float, base_radius: float, phase: float, shape_kind: int) -> ArrayMesh:
+	const RADIAL_SEGMENTS := 64
+	const HEIGHT_SEGMENTS := 14
+	var skirt_height := funnel_height * 0.3
+	var flare_radius := base_radius * 2.2
+	var base_centre := _tornado_centre_offset(0.0, phase, shape_kind)
+	var vertices := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colors := PackedColorArray()
+	var uvs := PackedVector2Array()
+	var indices := PackedInt32Array()
+	for ring in HEIGHT_SEGMENTS + 1:
+		var ring_fraction := float(ring) / float(HEIGHT_SEGMENTS)
+		var height_fraction := ring_fraction * skirt_height / funnel_height
+		var profile_radius := lerpf(base_radius * 1.02, flare_radius, pow(1.0 - ring_fraction, 2.8))
+		var centre := _tornado_centre_offset(height_fraction, phase, shape_kind) - base_centre
+		for segment in RADIAL_SEGMENTS + 1:
+			var radial_fraction := float(segment) / float(RADIAL_SEGMENTS)
+			var angle := radial_fraction * TAU
+			var broad_lobe := sin(angle * 2.0 + height_fraction * 8.0 + phase) * 0.025
+			var fine_lobe := sin(angle * 7.0 - height_fraction * 19.0 + phase * 2.3) * 0.045
+			var ring_radius := profile_radius * (1.0 + broad_lobe + fine_lobe)
+			var radial := Vector3(cos(angle), 0.0, sin(angle))
+			vertices.append(Vector3(centre.x, ring_fraction * skirt_height, centre.y) + radial * ring_radius)
+			normals.append(radial)
+			colors.append(Color(1.0, 0.0, 0.0, 0.0))
+			uvs.append(Vector2(radial_fraction, height_fraction))
+	for ring in HEIGHT_SEGMENTS:
+		for segment in RADIAL_SEGMENTS:
+			var first := ring * (RADIAL_SEGMENTS + 1) + segment
+			var next := first + RADIAL_SEGMENTS + 1
+			indices.append_array(PackedInt32Array([first, next, first + 1, first + 1, next, next + 1]))
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
 	arrays[Mesh.ARRAY_INDEX] = indices
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)

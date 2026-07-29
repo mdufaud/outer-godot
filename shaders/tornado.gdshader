@@ -1,15 +1,15 @@
 shader_type spatial;
 render_mode unshaded, cull_disabled, shadows_disabled, fog_disabled;
 
-uniform vec3 deep_color: source_color = vec3(0.006, 0.013, 0.004);
-uniform vec3 band_color: source_color = vec3(0.03, 0.05, 0.012);
-uniform vec3 storm_color: source_color = vec3(0.07, 0.1, 0.022);
-uniform vec3 highlight_color: source_color = vec3(0.16, 0.19, 0.05);
-uniform vec3 interior_deep_color: source_color = vec3(0.035, 0.04, 0.012);
-uniform vec3 interior_band_color: source_color = vec3(0.11, 0.12, 0.035);
-uniform vec3 interior_storm_color: source_color = vec3(0.18, 0.19, 0.06);
-uniform vec3 interior_highlight_color: source_color = vec3(0.25, 0.26, 0.085);
-uniform vec3 lightning_color: source_color = vec3(0.68, 0.9, 0.72);
+uniform vec3 deep_color: source_color = vec3(0.004, 0.016, 0.015);
+uniform vec3 band_color: source_color = vec3(0.014, 0.048, 0.045);
+uniform vec3 storm_color: source_color = vec3(0.03, 0.09, 0.085);
+uniform vec3 highlight_color: source_color = vec3(0.07, 0.17, 0.16);
+uniform vec3 interior_deep_color: source_color = vec3(0.016, 0.038, 0.036);
+uniform vec3 interior_band_color: source_color = vec3(0.048, 0.115, 0.108);
+uniform vec3 interior_storm_color: source_color = vec3(0.08, 0.18, 0.17);
+uniform vec3 interior_highlight_color: source_color = vec3(0.11, 0.25, 0.235);
+uniform vec3 lightning_color: source_color = vec3(0.72, 0.95, 0.9);
 uniform vec3 rim_color: source_color = vec3(0.25, 0.95, 0.82);
 uniform float swirl_speed = 0.018;
 

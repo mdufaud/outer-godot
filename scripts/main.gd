@@ -46,6 +46,8 @@ var _was_in_atmosphere := false
 var _feedback_initialized := false
 var _transition_tint: ColorRect
 var _transition_strength := 0.0
+var _rain_overlay: ColorRect
+var _rain_strength := 0.0
 var _loaded := false
 var _boot_started_ms := 0
 var _boot_last_change_ms := 0
@@ -159,6 +161,9 @@ func _build_feedback_overlay() -> void:
 	var layer := CanvasLayer.new()
 	layer.layer = 1
 	add_child(layer)
+	var back_buffer := BackBufferCopy.new()
+	back_buffer.copy_mode = BackBufferCopy.COPY_MODE_VIEWPORT
+	layer.add_child(back_buffer)
 	_feedback_root = Control.new()
 	_feedback_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_feedback_root.size = get_viewport().get_visible_rect().size
@@ -175,6 +180,15 @@ func _build_environment_feedback() -> void:
 	_camera_shake = CameraShakeScript.new()
 	_camera_shake.add_to_group("camera_shake")
 	add_child(_camera_shake)
+	_rain_overlay = ColorRect.new()
+	var rain_material := ShaderMaterial.new()
+	rain_material.shader = preload("res://shaders/rain_lens.gdshader")
+	rain_material.set_shader_parameter("droplet_layers", 3 if RenderingServer.get_current_rendering_method() == "forward_plus" else 2)
+	_rain_overlay.material = rain_material
+	_rain_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_rain_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_rain_overlay.visible = false
+	_feedback_root.add_child(_rain_overlay)
 	_transition_tint = ColorRect.new()
 	var transition_material := ShaderMaterial.new()
 	transition_material.shader = preload("res://shaders/environment_transition.gdshader")
@@ -251,6 +265,14 @@ func _update_environment_feedback(delta: float, camera: Camera3D) -> void:
 	_transition_strength = move_toward(_transition_strength, 0.0, delta * 1.8)
 	_transition_tint.visible = _transition_strength > 0.001
 	(_transition_tint.material as ShaderMaterial).set_shader_parameter("strength", _transition_strength)
+	var rain_target := 0.0
+	if source != null and source.get("body_kind") == "cyclops":
+		var sea_level: float = float(source.get("radius")) + float(source.get("ocean_level"))
+		var altitude := camera.global_position.distance_to(source.global_position) - sea_level
+		rain_target = clampf(1.0 - altitude / 90.0, 0.0, 1.0) * (1.0 - _underwater_strength)
+	_rain_strength = move_toward(_rain_strength, rain_target, delta * 1.2)
+	_rain_overlay.visible = _rain_strength > 0.001
+	(_rain_overlay.material as ShaderMaterial).set_shader_parameter("strength", _rain_strength)
 
 
 func _trigger_environment_transition(camera: Camera3D, tint: Color, shake_strength: float, duration: float) -> void:

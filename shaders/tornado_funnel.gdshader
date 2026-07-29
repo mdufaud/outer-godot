@@ -1,9 +1,9 @@
 shader_type spatial;
 render_mode unshaded, blend_mix, cull_disabled, depth_prepass_alpha, shadows_disabled, fog_disabled;
 
-uniform vec3 dark_color : source_color = vec3(0.003, 0.009, 0.009);
-uniform vec3 water_color : source_color = vec3(0.012, 0.052, 0.055);
-uniform vec3 mist_color : source_color = vec3(0.04, 0.09, 0.085);
+uniform vec3 dark_color : source_color = vec3(0.0015, 0.012, 0.014);
+uniform vec3 water_color : source_color = vec3(0.008, 0.065, 0.06);
+uniform vec3 mist_color : source_color = vec3(0.035, 0.105, 0.098);
 uniform float phase = 0.0;
 uniform float layer_offset = 0.0;
 uniform float radial_scale = 1.0;
