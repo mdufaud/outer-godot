@@ -527,6 +527,30 @@ func _build_storm_interior() -> void:
 	add_child(_storm_interior)
 	var storm_rng := RandomNumberGenerator.new()
 	storm_rng.seed = rng_seed * 3571 + 91
+	var storm_directions: Array[Vector3] = []
+	for index in TORNADO_COUNT:
+		var chosen_direction := Vector3.ZERO
+		for attempt in 96:
+			var candidate := Vector3(
+				storm_rng.randf_range(-1.0, 1.0),
+				storm_rng.randf_range(-1.0, 1.0),
+				storm_rng.randf_range(-1.0, 1.0)
+			).normalized()
+			var separated := true
+			for existing_direction in storm_directions:
+				if candidate.dot(existing_direction) > 0.82:
+					separated = false
+					break
+			if separated:
+				chosen_direction = candidate
+				break
+		if chosen_direction == Vector3.ZERO:
+			chosen_direction = Vector3(
+				storm_rng.randf_range(-1.0, 1.0),
+				storm_rng.randf_range(-1.0, 1.0),
+				storm_rng.randf_range(-1.0, 1.0)
+			).normalized()
+		storm_directions.append(chosen_direction)
 	var shape_order: Array[int] = [0, 1, 2, 3]
 	for shape_index in range(shape_order.size() - 1, 0, -1):
 		var swap_index := storm_rng.randi_range(0, shape_index)
@@ -537,11 +561,7 @@ func _build_storm_interior() -> void:
 		var shape_kind := shape_order[index % shape_order.size()]
 		var orbit := Node3D.new()
 		orbit.name = "TornadoOrbit%d" % index
-		orbit.rotation = Vector3(
-			storm_rng.randf_range(-1.1, 1.1),
-			storm_rng.randf_range(0.0, TAU),
-			storm_rng.randf_range(-0.7, 0.7)
-		)
+		orbit.basis = _storm_basis_for_direction(storm_directions[index], storm_rng.randf_range(0.0, TAU))
 		orbit.set_meta("speed", storm_rng.randf_range(0.035, 0.085) * STORM_MOTION_SCALE * (-1.0 if index % 2 else 1.0))
 		orbit.set_meta("shape_kind", shape_kind)
 		_storm_interior.add_child(orbit)
@@ -608,6 +628,13 @@ func _build_storm_interior() -> void:
 		_storm_contacts.append(contact)
 	_build_abyss_lights(storm_rng)
 	_set_storm_visibility(_storm_visibility)
+
+
+func _storm_basis_for_direction(direction: Vector3, roll: float) -> Basis:
+	var reference := Vector3.UP if absf(direction.y) < 0.92 else Vector3.FORWARD
+	var tangent := reference.cross(direction).normalized()
+	var binormal := direction.cross(tangent).normalized()
+	return Basis(direction, tangent, binormal).rotated(direction, roll)
 
 
 func _build_tornado_mesh(funnel_height: float, base_radius: float, trunk_radius: float, crown_radius: float, phase: float, shape_kind: int) -> ArrayMesh:

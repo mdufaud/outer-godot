@@ -39,8 +39,8 @@ vec3 lightning_direction(float seed, vec3 observer_direction) {
 	vec3 reference = abs(observer_direction.y) > 0.82 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
 	vec3 tangent_x = normalize(cross(reference, observer_direction));
 	vec3 tangent_y = cross(observer_direction, tangent_x);
-	float offset_x = (hash1(seed + 1.3) * 2.0 - 1.0) * 0.28;
-	float offset_y = (hash1(seed + 5.7) * 2.0 - 1.0) * 0.14;
+	float offset_x = (hash1(seed + 1.3) * 2.0 - 1.0) * 0.72;
+	float offset_y = (hash1(seed + 5.7) * 2.0 - 1.0) * 0.58;
 	return normalize(observer_direction + tangent_x * offset_x + tangent_y * offset_y);
 }
 
@@ -164,27 +164,24 @@ void fragment() {
 	float lightning = 0.0;
 	float lightning_glow = 0.0;
 	vec3 observer_direction = normalize(v_local_camera);
-	float burst_duration = 9.0;
-	float burst_cycle = floor(TIME / burst_duration);
-	float burst_time = TIME - burst_cycle * burst_duration;
-	float burst_seed = burst_cycle * 83.17 + 12.4;
-	int bolt_count = 1 + int(floor(hash1(burst_seed + 3.8) * 6.0));
-	for (int bolt_index = 0; bolt_index < 6; bolt_index++) {
-		if (bolt_index < bolt_count) {
-			float bolt_value = float(bolt_index);
-			float bolt_seed = burst_seed + bolt_value * 37.91;
-			float strike_time = 0.45 + bolt_value * 1.15 + hash1(bolt_seed + 5.6) * 0.75;
-			float local_time = burst_time - strike_time;
-			float active = step(0.0, local_time) * (1.0 - step(0.32, local_time));
-			float primary_flash = exp(-local_time * mix(22.0, 38.0, hash1(bolt_seed + 9.2)));
-			float echo_delay = mix(0.07, 0.14, hash1(bolt_seed + 13.5));
-			float secondary_flash = exp(-abs(local_time - echo_delay) * mix(42.0, 68.0, hash1(bolt_seed + 17.8))) * mix(0.3, 0.72, hash1(bolt_seed + 21.1));
-			float pulse = min(primary_flash + secondary_flash, 1.0) * active;
-			float bolt_glow = 0.0;
-			float bolt = lightning_bolt(direction, observer_direction, bolt_seed, bolt_glow);
-			lightning = max(lightning, bolt * pulse);
-			lightning_glow = max(lightning_glow, bolt_glow * pulse);
-		}
+	float event_cell_duration = 2.5;
+	float event_cell = floor(TIME / event_cell_duration);
+	float event_cell_time = TIME - event_cell * event_cell_duration;
+	for (int channel = 0; channel < 6; channel++) {
+		float channel_value = float(channel);
+		float channel_seed = channel_value * 47.31 + 8.7;
+		float strike_time = 0.5 + hash1(event_cell * 19.73 + channel_seed) * 1.5;
+		float local_time = event_cell_time - strike_time;
+		float active = step(0.0, local_time) * (1.0 - step(0.25, local_time));
+		float bolt_seed = event_cell * 83.17 + channel_seed;
+		float primary_flash = exp(-local_time * mix(22.0, 38.0, hash1(bolt_seed + 9.2)));
+		float echo_delay = mix(0.05, 0.11, hash1(bolt_seed + 13.5));
+		float secondary_flash = exp(-abs(local_time - echo_delay) * mix(42.0, 68.0, hash1(bolt_seed + 17.8))) * mix(0.3, 0.72, hash1(bolt_seed + 21.1));
+		float pulse = min(primary_flash + secondary_flash, 1.0) * active;
+		float bolt_glow = 0.0;
+		float bolt = lightning_bolt(direction, observer_direction, bolt_seed, bolt_glow);
+		lightning = max(lightning, bolt * pulse);
+		lightning_glow = max(lightning_glow, bolt_glow * pulse);
 	}
 	if (interior) {
 		col *= mix(0.52, 0.92, limb) * mix(0.72, 1.0, light_wrap);
