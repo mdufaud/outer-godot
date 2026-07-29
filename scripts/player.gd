@@ -155,6 +155,10 @@ func _physics_process(delta: float) -> void:
 		relative_velocity += thrust_dir * JETPACK_ACCEL * delta
 		if Input.is_action_pressed("brake"):
 			relative_velocity = relative_velocity.move_toward(Vector3.ZERO, JETPACK_BRAKE * delta)
+	if reference_source != null and reference_source.has_method("get_storm_push"):
+		relative_velocity += reference_source.get_storm_push(global_position) * delta
+	if reference_source != null and reference_source.has_method("constrain_storm_player_velocity"):
+		relative_velocity = reference_source.constrain_storm_player_velocity(global_position, relative_velocity)
 
 	# CharacterBody3D judges floor snap, slope and collision sweeps against
 	# `velocity` in world space, and Terra alone orbits at 32 u/s. Feeding the

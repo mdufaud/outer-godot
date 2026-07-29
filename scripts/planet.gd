@@ -12,6 +12,7 @@ const OceanWaveATexture := preload("res://assets/ocean_textures/wave_a.png")
 const OceanWaveBTexture := preload("res://assets/ocean_textures/wave_b.png")
 const OceanFoamTexture := preload("res://assets/ocean_textures/water_foam.png")
 const BlueNoiseTexture := preload("res://assets/planet_textures/blue_noise.png")
+const CyclopsRockShader := preload("res://shaders/cyclops_rock.gdshader")
 const MESH_CACHE_VERSION := 15
 const WATCHFUL_EYE_DIRECTION := Vector3(0.0, 0.18, 1.0)
 const OCEAN_FOAM_COLOR := Color(0.92, 0.98, 1.0)
@@ -21,7 +22,17 @@ const STORM_PRELOAD_MARGIN := 60.0
 const STORM_FULL_VISIBILITY_DEPTH := 12.0
 const STORM_UNLOAD_MARGIN := 75.0
 const STORM_MOTION_SCALE := 0.5
+const STORM_SHELL_HEIGHT := 46.0
 const TORNADO_WIDTH_SCALE := 2.0
+const LANDING_ROCK_COUNT := 5
+const STORM_MIN_SEPARATION := 0.453786
+const STORM_SEPARATION_MARGIN := 6.0
+const STORM_ROCK_MIN_SEPARATION := 0.383972
+const STORM_MOBILE_PUSH := 15.0
+const STORM_POLAR_PUSH := 30.0
+const STORM_PLAYER_BARRIER_SCALE := 1.05
+const STORM_PLAYER_EJECTION_SPEED := 2.0
+const POLAR_TORNADO_WIDTH_SCALE := 2.25
 const ATMOSPHERE_DITHER_STRENGTH := 0.3
 const ATMOSPHERE_DITHER_SCALE := 3.89
 const ATMOSPHERE_SCATTERING_POINTS := 10
@@ -89,6 +100,9 @@ var _storm_lights: Array[OmniLight3D] = []
 var _storm_shell_radius := 0.0
 var _storm_elapsed := 0.0
 var _storm_visibility := 0.0
+var _storm_states: Array[Dictionary] = []
+var _landing_rock_directions: Array[Vector3] = []
+var _landing_rock_radii: Array[float] = []
 var _lod_resolutions: Array[int] = []
 var _active_lod := -1
 var _terrain_height_minmax := Vector2.ONE
@@ -108,6 +122,7 @@ func _ready() -> void:
 	_build_collision()
 	_build_ocean()
 	_build_atmosphere()
+	_build_landing_rocks()
 	_build_storm_system()
 	for job in _boot_jobs:
 		if job.phase == "topology":
@@ -500,13 +515,124 @@ func get_atmosphere_lut_texture() -> Texture2D:
 	return _atmosphere_lut.texture if _atmosphere_lut_bound else null
 
 
+func _build_landing_rocks() -> void:
+	if body_kind != "cyclops":
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = rng_seed * 6211 + 203
+	var material := ShaderMaterial.new()
+	material.shader = CyclopsRockShader
+	var ocean_radius := radius + ocean_level
+	for index in LANDING_ROCK_COUNT:
+		var direction := _choose_landing_rock_direction(rng)
+		var rock_radius := rng.randf_range(7.0, 10.0)
+		var rock_height := rng.randf_range(10.0, 15.0)
+		var geometry := _build_landing_rock_geometry(rock_radius, rock_height, rng)
+		var rock_basis := _surface_basis(direction, rng.randf_range(0.0, TAU))
+		var rock_transform := Transform3D(rock_basis, direction * ocean_radius)
+		var mesh_instance := MeshInstance3D.new()
+		mesh_instance.name = "LandingRock%d" % index
+		mesh_instance.mesh = geometry.mesh
+		mesh_instance.material_override = material
+		mesh_instance.transform = rock_transform
+		add_child(mesh_instance)
+		var collision := CollisionShape3D.new()
+		collision.name = "LandingRockCollision%d" % index
+		var shape := ConvexPolygonShape3D.new()
+		shape.points = geometry.points
+		collision.shape = shape
+		collision.transform = rock_transform
+		add_child(collision)
+		_landing_rock_directions.append(direction)
+		_landing_rock_radii.append(rock_radius)
+
+
+func _choose_landing_rock_direction(rng: RandomNumberGenerator) -> Vector3:
+	var best := Vector3.FORWARD
+	var best_clearance := -INF
+	for _attempt in 256:
+		var candidate := Vector3(
+			rng.randf_range(-1.0, 1.0),
+			rng.randf_range(-0.58, 0.58),
+			rng.randf_range(-1.0, 1.0)
+		).normalized()
+		var clearance := acos(clampf(absf(candidate.y), -1.0, 1.0))
+		for existing in _landing_rock_directions:
+			clearance = minf(clearance, candidate.angle_to(existing))
+		if clearance > best_clearance:
+			best = candidate
+			best_clearance = clearance
+	return best
+
+
+func _build_landing_rock_geometry(rock_radius: float, rock_height: float, rng: RandomNumberGenerator) -> Dictionary:
+	const SEGMENTS := 11
+	const RINGS := 5
+	var vertices := PackedVector3Array()
+	var indices := PackedInt32Array()
+	var ring_heights: Array[float] = [-7.0, -1.0, rock_height * 0.30, rock_height * 0.68, rock_height * 0.88]
+	var ring_scales: Array[float] = [0.66, 1.0, 0.82, 0.58, 0.36]
+	var phase_a := rng.randf_range(0.0, TAU)
+	var phase_b := rng.randf_range(0.0, TAU)
+	var lean := Vector2(rng.randf_range(-0.18, 0.18), rng.randf_range(-0.18, 0.18)) * rock_radius
+	for ring in RINGS:
+		var ring_fraction := float(ring) / float(RINGS - 1)
+		var centre := lean * ring_fraction
+		for segment in SEGMENTS:
+			var angle := TAU * float(segment) / float(SEGMENTS)
+			var angular_shape := 1.0 + sin(angle * 3.0 + phase_a) * 0.13 + sin(angle * 5.0 + phase_b) * 0.08
+			var radius_value := rock_radius * ring_scales[ring] * angular_shape * rng.randf_range(0.91, 1.09)
+			vertices.append(Vector3(
+				centre.x + cos(angle) * radius_value,
+				ring_heights[ring] + rng.randf_range(-0.35, 0.35) * ring_fraction,
+				centre.y + sin(angle) * radius_value
+			))
+	for ring in RINGS - 1:
+		for segment in SEGMENTS:
+			var next := (segment + 1) % SEGMENTS
+			var lower := ring * SEGMENTS + segment
+			var lower_next := ring * SEGMENTS + next
+			var upper := (ring + 1) * SEGMENTS + segment
+			var upper_next := (ring + 1) * SEGMENTS + next
+			indices.append_array(PackedInt32Array([lower, upper, lower_next, lower_next, upper, upper_next]))
+	var top_centre := vertices.size()
+	vertices.append(Vector3(lean.x, rock_height, lean.y))
+	for segment in SEGMENTS:
+		var next := (segment + 1) % SEGMENTS
+		indices.append_array(PackedInt32Array([SEGMENTS * (RINGS - 1) + segment, top_centre, SEGMENTS * (RINGS - 1) + next]))
+	var faceted_vertices := PackedVector3Array()
+	var faceted_normals := PackedVector3Array()
+	for index in range(0, indices.size(), 3):
+		var first := vertices[indices[index]]
+		var second := vertices[indices[index + 1]]
+		var third := vertices[indices[index + 2]]
+		var normal := (second - first).cross(third - first).normalized()
+		for vertex in [first, third, second]:
+			faceted_vertices.append(vertex)
+			faceted_normals.append(normal)
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = faceted_vertices
+	arrays[Mesh.ARRAY_NORMAL] = faceted_normals
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return {"mesh": mesh, "points": vertices}
+
+
+func _surface_basis(direction: Vector3, roll: float) -> Basis:
+	var reference := Vector3.UP if absf(direction.y) < 0.92 else Vector3.FORWARD
+	var tangent := reference.cross(direction).normalized()
+	var bitangent := tangent.cross(direction).normalized()
+	return Basis(tangent, direction, bitangent).rotated(direction, roll)
+
+
 func _build_storm_system() -> void:
 	if body_kind != "cyclops":
 		return
 	var cloud_shell := MeshInstance3D.new()
 	cloud_shell.name = "StormCloudShell"
 	var cloud_mesh := SphereMesh.new()
-	_storm_shell_radius = radius + ocean_level + 46.0
+	_storm_shell_radius = radius + ocean_level + STORM_SHELL_HEIGHT
 	cloud_mesh.radius = _storm_shell_radius
 	cloud_mesh.height = cloud_mesh.radius * 2.0
 	cloud_mesh.radial_segments = 96
@@ -517,6 +643,89 @@ func _build_storm_system() -> void:
 	cloud_shell.material_override = cloud_material
 	cloud_shell.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(cloud_shell)
+	_initialize_storm_states()
+
+
+func _initialize_storm_states() -> void:
+	if not _storm_states.is_empty():
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = rng_seed * 3571 + 91
+	_storm_states.append(_make_storm_state(rng, Vector3.UP, true, POLAR_TORNADO_WIDTH_SCALE, 0, "NorthPolarTornado"))
+	_storm_states.append(_make_storm_state(rng, Vector3.DOWN, true, POLAR_TORNADO_WIDTH_SCALE, 0, "SouthPolarTornado"))
+	for index in TORNADO_COUNT:
+		var state := _make_storm_state(rng, Vector3.FORWARD, false, 1.0, index % 4, "TornadoOrbit%d" % index)
+		state.direction = _choose_storm_direction(float(state.crown_radius), float(state.contact_radius), rng)
+		var direction: Vector3 = state.direction
+		var drift := Vector3(
+			rng.randf_range(-1.0, 1.0),
+			rng.randf_range(-1.0, 1.0),
+			rng.randf_range(-1.0, 1.0)
+		)
+		drift = (drift - direction * drift.dot(direction)).normalized()
+		state.velocity = drift * rng.randf_range(0.012, 0.022) * STORM_MOTION_SCALE
+		state.wander_axis = Vector3(
+			rng.randf_range(-1.0, 1.0),
+			rng.randf_range(-1.0, 1.0),
+			rng.randf_range(-1.0, 1.0)
+		).normalized()
+		state.wander_phase = rng.randf_range(0.0, TAU)
+		_storm_states.append(state)
+
+
+func _make_storm_state(rng: RandomNumberGenerator, direction: Vector3, is_static: bool, width_scale: float, shape_kind: int, state_name: String) -> Dictionary:
+	var scale := TORNADO_WIDTH_SCALE * width_scale
+	var crown_radius := rng.randf_range(17.0, 21.0) * scale
+	return {
+		"name": state_name,
+		"direction": direction,
+		"static": is_static,
+		"shape_kind": shape_kind,
+		"roll": rng.randf_range(0.0, TAU),
+		"phase": rng.randf_range(0.0, TAU),
+		"funnel_height": STORM_SHELL_HEIGHT + rng.randf_range(5.0, 8.0),
+		"base_radius": rng.randf_range(3.5, 4.8) * scale,
+		"trunk_radius": rng.randf_range(6.8, 8.4) * scale,
+		"crown_radius": crown_radius,
+		"contact_radius": crown_radius * 0.78,
+		"velocity": Vector3.ZERO,
+		"wander_axis": Vector3.RIGHT,
+		"wander_phase": 0.0,
+		"orbit": null,
+		"contact": null,
+	}
+
+
+func _choose_storm_direction(crown_radius: float, contact_radius: float, rng: RandomNumberGenerator) -> Vector3:
+	var best := Vector3.FORWARD
+	var best_clearance := -INF
+	for _attempt in 512:
+		var candidate := Vector3(
+			rng.randf_range(-1.0, 1.0),
+			rng.randf_range(-1.0, 1.0),
+			rng.randf_range(-1.0, 1.0)
+		).normalized()
+		var clearance := INF
+		for state in _storm_states:
+			var required := _storm_minimum_angle(crown_radius, float(state.crown_radius))
+			clearance = minf(clearance, candidate.angle_to(state.direction) - required)
+		for rock_index in _landing_rock_directions.size():
+			var required := _storm_rock_minimum_angle(contact_radius, _landing_rock_radii[rock_index])
+			clearance = minf(clearance, candidate.angle_to(_landing_rock_directions[rock_index]) - required)
+		if clearance > best_clearance:
+			best = candidate
+			best_clearance = clearance
+	return best
+
+
+func _storm_minimum_angle(first_radius: float, second_radius: float) -> float:
+	var footprint := clampf((first_radius + second_radius + STORM_SEPARATION_MARGIN) / _storm_shell_radius, 0.0, 0.95)
+	return maxf(STORM_MIN_SEPARATION, asin(footprint))
+
+
+func _storm_rock_minimum_angle(contact_radius: float, rock_radius: float) -> float:
+	var footprint := clampf((contact_radius + rock_radius + STORM_SEPARATION_MARGIN) / (radius + ocean_level), 0.0, 0.95)
+	return maxf(STORM_ROCK_MIN_SEPARATION, asin(footprint))
 
 
 func _build_storm_interior() -> void:
@@ -526,55 +735,26 @@ func _build_storm_interior() -> void:
 	_storm_interior.name = "StormInterior"
 	add_child(_storm_interior)
 	var storm_rng := RandomNumberGenerator.new()
-	storm_rng.seed = rng_seed * 3571 + 91
-	var storm_directions: Array[Vector3] = []
-	for index in TORNADO_COUNT:
-		var chosen_direction := Vector3.ZERO
-		for attempt in 96:
-			var candidate := Vector3(
-				storm_rng.randf_range(-1.0, 1.0),
-				storm_rng.randf_range(-1.0, 1.0),
-				storm_rng.randf_range(-1.0, 1.0)
-			).normalized()
-			var separated := true
-			for existing_direction in storm_directions:
-				if candidate.dot(existing_direction) > 0.82:
-					separated = false
-					break
-			if separated:
-				chosen_direction = candidate
-				break
-		if chosen_direction == Vector3.ZERO:
-			chosen_direction = Vector3(
-				storm_rng.randf_range(-1.0, 1.0),
-				storm_rng.randf_range(-1.0, 1.0),
-				storm_rng.randf_range(-1.0, 1.0)
-			).normalized()
-		storm_directions.append(chosen_direction)
-	var shape_order: Array[int] = [0, 1, 2, 3]
-	for shape_index in range(shape_order.size() - 1, 0, -1):
-		var swap_index := storm_rng.randi_range(0, shape_index)
-		var swapped_shape := shape_order[shape_index]
-		shape_order[shape_index] = shape_order[swap_index]
-		shape_order[swap_index] = swapped_shape
-	for index in TORNADO_COUNT:
-		var shape_kind := shape_order[index % shape_order.size()]
+	storm_rng.seed = rng_seed * 3571 + 1901
+	for index in _storm_states.size():
+		var state: Dictionary = _storm_states[index]
+		var shape_kind := int(state.shape_kind)
 		var orbit := Node3D.new()
-		orbit.name = "TornadoOrbit%d" % index
-		orbit.basis = _storm_basis_for_direction(storm_directions[index], storm_rng.randf_range(0.0, TAU))
-		orbit.set_meta("speed", storm_rng.randf_range(0.035, 0.085) * STORM_MOTION_SCALE * (-1.0 if index % 2 else 1.0))
+		orbit.name = String(state.name)
+		orbit.basis = _storm_basis_for_direction(state.direction, float(state.roll))
 		orbit.set_meta("shape_kind", shape_kind)
+		orbit.set_meta("static", bool(state.static))
 		_storm_interior.add_child(orbit)
-		var funnel_height := storm_rng.randf_range(41.0, 45.0)
+		var funnel_height := float(state.funnel_height)
 		var funnel_root := Node3D.new()
 		funnel_root.name = "Tornado"
 		funnel_root.position = Vector3(radius + ocean_level + funnel_height * 0.5, 0.0, 0.0)
 		funnel_root.rotation_degrees.z = -90.0
 		orbit.add_child(funnel_root)
-		var base_phase := storm_rng.randf_range(0.0, TAU)
-		var base_radius := storm_rng.randf_range(3.5, 4.8) * TORNADO_WIDTH_SCALE
-		var trunk_radius := storm_rng.randf_range(6.8, 8.4) * TORNADO_WIDTH_SCALE
-		var crown_radius := storm_rng.randf_range(17.0, 21.0) * TORNADO_WIDTH_SCALE
+		var base_phase := float(state.phase)
+		var base_radius := float(state.base_radius)
+		var trunk_radius := float(state.trunk_radius)
+		var crown_radius := float(state.crown_radius)
 		var skeleton := Skeleton3D.new()
 		skeleton.name = "TornadoRig"
 		skeleton.set_meta("phase", base_phase)
@@ -627,10 +807,10 @@ func _build_storm_interior() -> void:
 		contact.collision_layer = 0
 		contact.collision_mask = 0
 		contact.monitoring = false
-		contact.set_meta("radius", crown_radius * 0.78)
+		contact.set_meta("radius", float(state.contact_radius))
 		var contact_shape := CollisionShape3D.new()
 		var contact_cylinder := CylinderShape3D.new()
-		contact_cylinder.radius = crown_radius * 0.78
+		contact_cylinder.radius = float(state.contact_radius)
 		contact_cylinder.height = 2.2
 		contact_shape.shape = contact_cylinder
 		contact.add_child(contact_shape)
@@ -638,6 +818,9 @@ func _build_storm_interior() -> void:
 		_storm_orbits.append(orbit)
 		_storm_rigs.append(skeleton)
 		_storm_contacts.append(contact)
+		state.orbit = orbit
+		state.contact = contact
+		_storm_states[index] = state
 	_build_abyss_lights(storm_rng)
 	_set_storm_visibility(_storm_visibility)
 
@@ -813,6 +996,11 @@ func _build_abyss_lights(storm_rng: RandomNumberGenerator) -> void:
 func _clear_storm_interior() -> void:
 	if _storm_interior == null:
 		return
+	for index in _storm_states.size():
+		var state: Dictionary = _storm_states[index]
+		state.orbit = null
+		state.contact = null
+		_storm_states[index] = state
 	_storm_interior.queue_free()
 	_storm_interior = null
 	_storm_orbits.clear()
@@ -822,6 +1010,71 @@ func _clear_storm_interior() -> void:
 	_storm_glows.clear()
 	_storm_lights.clear()
 	_storm_visibility = 0.0
+
+
+func get_storm_push(world_position: Vector3) -> Vector3:
+	if body_kind != "cyclops" or _storm_states.is_empty():
+		return Vector3.ZERO
+	var offset := world_position - global_position
+	if offset.length_squared() < 0.0001:
+		return Vector3.ZERO
+	var local_up := offset.normalized()
+	var ocean_radius := radius + ocean_level
+	var result := Vector3.ZERO
+	for state in _storm_states:
+		var axis := (global_basis * (state.direction as Vector3)).normalized()
+		var along_axis := offset.dot(axis)
+		var axial_height := along_axis - ocean_radius
+		var funnel_height := float(state.funnel_height)
+		if axial_height < -2.0 or axial_height > funnel_height:
+			continue
+		var lateral := offset - axis * along_axis
+		var height_fraction := clampf(axial_height / funnel_height, 0.0, 1.0)
+		var influence_radius := lerpf(float(state.contact_radius), float(state.crown_radius), height_fraction) * STORM_PLAYER_BARRIER_SCALE
+		var lateral_distance := lateral.length()
+		if lateral_distance >= influence_radius:
+			continue
+		var outward := lateral.normalized() if lateral_distance > 0.001 else _surface_basis(axis, 0.0).x
+		outward -= local_up * outward.dot(local_up)
+		if outward.length_squared() < 0.0001:
+			continue
+		var falloff := 1.0 - smoothstep(0.35, 1.0, lateral_distance / influence_radius)
+		var strength := STORM_POLAR_PUSH if bool(state.static) else STORM_MOBILE_PUSH
+		result += outward.normalized() * strength * falloff
+	return result.limit_length(STORM_POLAR_PUSH)
+
+
+func constrain_storm_player_velocity(world_position: Vector3, player_velocity: Vector3) -> Vector3:
+	if body_kind != "cyclops" or _storm_states.is_empty():
+		return player_velocity
+	var offset := world_position - global_position
+	if offset.length_squared() < 0.0001:
+		return player_velocity
+	var local_up := offset.normalized()
+	var ocean_radius := radius + ocean_level
+	var constrained := player_velocity
+	for state in _storm_states:
+		var axis := (global_basis * (state.direction as Vector3)).normalized()
+		var along_axis := offset.dot(axis)
+		var axial_height := along_axis - ocean_radius
+		var funnel_height := float(state.funnel_height)
+		if axial_height < -2.0 or axial_height > funnel_height:
+			continue
+		var lateral := offset - axis * along_axis
+		var height_fraction := clampf(axial_height / funnel_height, 0.0, 1.0)
+		var barrier_radius := lerpf(float(state.contact_radius), float(state.crown_radius), height_fraction) * STORM_PLAYER_BARRIER_SCALE
+		var lateral_distance := lateral.length()
+		if lateral_distance >= barrier_radius:
+			continue
+		var outward := lateral.normalized() if lateral_distance > 0.001 else _surface_basis(axis, 0.0).x
+		outward -= local_up * outward.dot(local_up)
+		if outward.length_squared() < 0.0001:
+			continue
+		outward = outward.normalized()
+		var inward_speed := constrained.dot(outward)
+		if inward_speed < STORM_PLAYER_EJECTION_SPEED:
+			constrained += outward * (STORM_PLAYER_EJECTION_SPEED - inward_speed)
+	return constrained
 
 
 func _set_storm_visibility(value: float) -> void:
@@ -834,10 +1087,85 @@ func _set_storm_visibility(value: float) -> void:
 		light.light_energy = float(light.get_meta("base_energy")) * _storm_visibility
 
 
+func _update_storm_motion(delta: float) -> void:
+	for index in _storm_states.size():
+		var state: Dictionary = _storm_states[index]
+		if bool(state.static):
+			continue
+		var direction: Vector3 = state.direction
+		var velocity: Vector3 = state.velocity
+		var wander_axis: Vector3 = state.wander_axis
+		var wander := wander_axis - direction * wander_axis.dot(direction)
+		if wander.length_squared() < 0.0001:
+			wander = direction.cross(Vector3.UP if absf(direction.y) < 0.9 else Vector3.RIGHT)
+		velocity += wander.normalized() * sin(_storm_elapsed * 0.37 + float(state.wander_phase)) * 0.0025 * delta
+		velocity -= direction * velocity.dot(direction)
+		velocity = velocity.limit_length(0.025 * STORM_MOTION_SCALE)
+		state.direction = (direction + velocity * delta).normalized()
+		state.velocity = velocity
+		_storm_states[index] = state
+	for _iteration in 3:
+		for first_index in _storm_states.size():
+			for second_index in range(first_index + 1, _storm_states.size()):
+				_enforce_storm_pair_separation(first_index, second_index)
+		for state_index in _storm_states.size():
+			var state: Dictionary = _storm_states[state_index]
+			if bool(state.static):
+				continue
+			var direction: Vector3 = state.direction
+			for rock_index in _landing_rock_directions.size():
+				var required := _storm_rock_minimum_angle(float(state.contact_radius), _landing_rock_radii[rock_index])
+				var angle := direction.angle_to(_landing_rock_directions[rock_index])
+				if angle < required:
+					direction = _move_direction_away(direction, _landing_rock_directions[rock_index], required - angle)
+			state.direction = direction
+			_storm_states[state_index] = state
+	for index in _storm_states.size():
+		var state: Dictionary = _storm_states[index]
+		if not bool(state.static):
+			var direction: Vector3 = state.direction
+			var velocity: Vector3 = state.velocity
+			state.velocity = (velocity - direction * velocity.dot(direction)) * 0.998
+			_storm_states[index] = state
+		var orbit: Node3D = state.orbit as Node3D
+		if is_instance_valid(orbit):
+			orbit.basis = _storm_basis_for_direction(state.direction, float(state.roll))
+
+
+func _enforce_storm_pair_separation(first_index: int, second_index: int) -> void:
+	var first: Dictionary = _storm_states[first_index]
+	var second: Dictionary = _storm_states[second_index]
+	var first_direction: Vector3 = first.direction
+	var second_direction: Vector3 = second.direction
+	var required := _storm_minimum_angle(float(first.crown_radius), float(second.crown_radius))
+	var angle := first_direction.angle_to(second_direction)
+	if angle >= required or (bool(first.static) and bool(second.static)):
+		return
+	var correction := required - angle
+	if bool(first.static):
+		second.direction = _move_direction_away(second_direction, first_direction, correction)
+	elif bool(second.static):
+		first.direction = _move_direction_away(first_direction, second_direction, correction)
+	else:
+		first.direction = _move_direction_away(first_direction, second_direction, correction * 0.5)
+		second.direction = _move_direction_away(second_direction, first_direction, correction * 0.5)
+	_storm_states[first_index] = first
+	_storm_states[second_index] = second
+
+
+func _move_direction_away(direction: Vector3, anchor: Vector3, angle: float) -> Vector3:
+	var current_angle := direction.angle_to(anchor)
+	var away := direction * cos(current_angle) - anchor
+	if away.length_squared() < 0.0001:
+		away = direction.cross(Vector3.UP if absf(direction.y) < 0.9 else Vector3.RIGHT)
+	return (direction * cos(angle) + away.normalized() * sin(angle)).normalized()
+
+
 func _update_storms(delta: float) -> void:
 	if body_kind != "cyclops":
 		return
 	_storm_elapsed += delta
+	_update_storm_motion(delta)
 	var camera := get_viewport().get_camera_3d()
 	if camera == null:
 		return
@@ -853,8 +1181,6 @@ func _update_storms(delta: float) -> void:
 		_clear_storm_interior()
 	if _storm_interior != null:
 		_set_storm_visibility(visibility)
-	for orbit in _storm_orbits:
-		orbit.rotate_y(float(orbit.get_meta("speed")) * delta)
 	for rig_index in _storm_rigs.size():
 		var rig := _storm_rigs[rig_index]
 		var phase := float(rig.get_meta("phase"))
