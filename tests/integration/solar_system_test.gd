@@ -28,7 +28,7 @@ func _run() -> void:
 	_test_surface_profiles(entries)
 	_test_orbit_helpers(entries)
 	if failures.is_empty():
-		print("Milestone 4 tests passed")
+		print("Solar system tests passed")
 		quit(0)
 	else:
 		for failure in failures:

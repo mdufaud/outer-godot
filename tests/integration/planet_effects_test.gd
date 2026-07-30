@@ -15,7 +15,7 @@ func _run() -> void:
 	_test_navigation_math()
 	_test_body_settings()
 	if failures.is_empty():
-		print("Bonification tests passed")
+		print("Planet effects tests passed")
 		quit(0)
 	else:
 		for failure in failures:

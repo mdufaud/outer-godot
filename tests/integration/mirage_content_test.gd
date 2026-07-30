@@ -28,7 +28,7 @@ func _run() -> void:
 		_expect(is_finite(first_value), "Mirage produced a non-finite height")
 		_expect(is_equal_approx(first_value, second.sample_factor(direction)), "Mirage generation is not deterministic")
 	if failures.is_empty():
-		print("Part 3 content tests passed")
+		print("Mirage content tests passed")
 		quit(0)
 	else:
 		for failure in failures:

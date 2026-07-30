@@ -6,8 +6,6 @@ docs/
 export_presets.cfg
 .editorconfig
 tests/*
-!tests/planet_gallery.gd
-!tests/planet_gallery.tscn
 !tests/integration/
 !tests/integration/**
 !tests/shared/

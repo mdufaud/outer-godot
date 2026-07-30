@@ -26,7 +26,7 @@ func _run() -> void:
 	for configuration in CONFIGURATIONS:
 		_test_configuration(configuration[0], configuration[1], configuration[2], reference)
 	if failures.is_empty():
-		print("Cyclops scale tests passed")
+		print("Cyclops geometry tests passed")
 		quit(0)
 	else:
 		for failure in failures:
