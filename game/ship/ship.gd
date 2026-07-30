@@ -259,8 +259,18 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 		state.apply_central_force(global_basis * thrust.limit_length(1.0) * THRUST_ACCEL * mass)
 	_set_thrusters(thrust.length_squared() > 0.01)
 
-	if Input.is_action_pressed("brake") and state.linear_velocity.length() > 0.3:
-		state.apply_central_force(-state.linear_velocity.normalized() * BRAKE_ACCEL * mass)
+	# Brake against the reference body, not against absolute space: killing the
+	# absolute velocity in orbit means killing the orbit and falling in.
+	if Input.is_action_pressed("brake"):
+		var reference := source
+		if reference == null:
+			reference = gravity_service.get_strongest(global_position)
+		var reference_velocity := Vector3.ZERO
+		if reference != null:
+			reference_velocity = reference.get("orbital_velocity")
+		var relative := state.linear_velocity - reference_velocity
+		if relative.length() > 0.3:
+			state.apply_central_force(-relative.normalized() * BRAKE_ACCEL * mass)
 
 	var look := mouse_delta + touch_service.look_delta
 	mouse_delta = Vector2.ZERO

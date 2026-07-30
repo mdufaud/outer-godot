@@ -6,8 +6,10 @@ const TouchServiceScript := preload("res://game/input/touch.gd")
 
 const WALK_SPEED := 5.5
 const SPRINT_MULT := 1.5
-const JUMP_SPEED := 5.0
-const JETPACK_ACCEL := 25.0
+const JUMP_SPEED_MIN := 4.0
+const JUMP_HOLD_ACCEL := 12.0
+const JUMP_HOLD_TIME := 0.28
+const JETPACK_ACCEL := 30.0
 const JETPACK_BRAKE := 20.0
 const JETPACK_DRAG := 1.5
 const SWIM_DRAG := 2.0
@@ -21,7 +23,9 @@ const GROUND_PROBE_DISTANCE := 0.2
 const GROUND_LERP := 10.0
 const FLOOR_MAX_ANGLE := 65.0
 const MOUSE_SENS := 0.002
-const ALIGN_SPEED := 8.0
+const ALIGN_SPEED_GROUND := 10.0
+const ALIGN_FADE_ALTITUDE := 1.5
+const FREE_LOOK_ROLL_SPEED := 1.8
 
 var up_dir := Vector3.UP
 var piloting := false
@@ -32,6 +36,9 @@ var celestial_system: Node = null
 var _fast_time_enabled := false
 var _fast_time_on_surface := false
 var _stored_velocity := Vector3.ZERO
+var _jump_hold_time := -1.0
+var _jetpack_armed := true
+var _free_look := false
 
 @onready var camera: Camera3D = $Camera3D
 @onready var ray: RayCast3D = $Camera3D/RayCast3D
@@ -75,12 +82,36 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		rotate_object_local(Vector3.UP, -event.relative.x * MOUSE_SENS)
-		camera.rotate_x(-event.relative.y * MOUSE_SENS)
-		camera.rotation.x = clampf(camera.rotation.x, -1.5, 1.5)
+		_apply_look(event.relative)
 	elif event.is_action_pressed("interact"):
 		_try_interact()
 		get_viewport().set_input_as_handled()
+
+
+# Aligned to a surface the body owns the yaw and the camera the pitch, so the
+# horizon stays level. Weightless there is no horizon to keep: the body takes
+# both axes plus roll, and the transfers below hand the pitch back and forth
+# without the view ever jumping.
+func _apply_look(look: Vector2) -> void:
+	rotate_object_local(Vector3.UP, -look.x * MOUSE_SENS)
+	if _free_look:
+		rotate_object_local(Vector3.RIGHT, -look.y * MOUSE_SENS)
+		return
+	camera.rotate_x(-look.y * MOUSE_SENS)
+	camera.rotation.x = clampf(camera.rotation.x, -1.5, 1.5)
+
+
+func _set_free_look(enabled: bool) -> void:
+	if enabled == _free_look:
+		return
+	_free_look = enabled
+	if enabled:
+		rotate_object_local(Vector3.RIGHT, camera.rotation.x)
+		camera.rotation.x = 0.0
+	else:
+		var pitch := asin(clampf((-global_basis.z).dot(up_dir), -1.0, 1.0))
+		rotate_object_local(Vector3.RIGHT, -pitch)
+		camera.rotation.x = clampf(pitch, -1.5, 1.5)
 
 
 func _try_interact() -> void:
@@ -93,9 +124,7 @@ func _physics_process(delta: float) -> void:
 	if piloting:
 		return
 	if touch_service.look_delta != Vector2.ZERO:
-		rotate_object_local(Vector3.UP, -touch_service.look_delta.x * MOUSE_SENS)
-		camera.rotate_x(-touch_service.look_delta.y * MOUSE_SENS)
-		camera.rotation.x = clampf(camera.rotation.x, -1.5, 1.5)
+		_apply_look(touch_service.look_delta)
 		touch_service.look_delta = Vector2.ZERO
 	if _fast_time_enabled and not _fast_time_on_surface:
 		velocity = Vector3.ZERO
@@ -112,14 +141,33 @@ func _physics_process(delta: float) -> void:
 	var relative_gravity := gravity
 	if reference_source != null:
 		reference_velocity = reference_source.get("orbital_velocity")
-		relative_gravity = gravity_service.get_relative_gravity(global_position, reference_source)
+		relative_gravity = gravity - gravity_service.get_gravity_at_body(reference_source)
 	if surface_source != null and relative_gravity.length_squared() > 0.0001:
 		up_dir = -relative_gravity.normalized()
-	_align_to_up(delta)
+	# Feet are only forced towards the ground near the ground. High above a body,
+	# or between two of them, the player keeps whatever orientation they flew in
+	# with instead of being snapped the moment they cross an influence sphere.
+	var align_rate := 0.0
+	if surface_source != null:
+		var fade_span := maxf(float(surface_source.get("radius")) * ALIGN_FADE_ALTITUDE, 1.0)
+		var altitude_ratio := clampf(_ground_clearance(surface_source) / fade_span, 0.0, 1.0)
+		align_rate = ALIGN_SPEED_GROUND * (1.0 - smoothstep(0.15, 1.0, altitude_ratio))
+	_set_free_look(align_rate <= 0.0)
+	if _free_look:
+		var roll := Input.get_axis("roll_right", "roll_left")
+		if roll != 0.0:
+			rotate_object_local(Vector3.BACK, roll * FREE_LOOK_ROLL_SPEED * delta)
+	_align_to_up(delta, align_rate)
 	up_direction = up_dir
 
 	var input_2d := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 	var speed := WALK_SPEED * (SPRINT_MULT if Input.is_action_pressed("sprint") else 1.0)
+	# The jump press is consumed by the jump itself: holding it only stretches the
+	# same leap. The jetpack needs a fresh press, so it can never fire on takeoff.
+	var jump_pressed := Input.is_action_pressed("jump")
+	if not jump_pressed:
+		_jetpack_armed = true
+		_jump_hold_time = -1.0
 	var previous_frame_velocity := reference_velocity
 	var frame_offset := Vector3.ZERO
 	if reference_source != null and reference_source == frame_source:
@@ -136,7 +184,7 @@ func _physics_process(delta: float) -> void:
 		environment_force = reference_source.get_environment_force(global_position)
 	var environment_lift := environment_force.dot(up_dir)
 	var grounded := is_on_floor()
-	if not grounded and surface_source != null and vertical_speed <= JUMP_SPEED * 0.5:
+	if not grounded and surface_source != null and vertical_speed <= JUMP_SPEED_MIN * 0.5:
 		grounded = _ground_clearance(surface_source) <= GROUND_PROBE_DISTANCE
 	# An updraft stronger than gravity rips the player off the ground: the walk lerp and the floor
 	# snap would otherwise eat the whole lift and the tornado would only feel like a wall.
@@ -159,14 +207,32 @@ func _physics_process(delta: float) -> void:
 		var v_horiz := relative_velocity - v_vert
 		v_horiz = v_horiz.lerp(wish_dir * speed, clampf(GROUND_LERP * delta, 0.0, 1.0))
 		if Input.is_action_just_pressed("jump"):
-			v_vert += up_dir * JUMP_SPEED
+			v_vert += up_dir * JUMP_SPEED_MIN
+			_jump_hold_time = 0.0
+			_jetpack_armed = false
 		else:
 			v_vert -= up_dir * STICK_TO_GROUND_SPEED
 		relative_velocity = v_horiz + v_vert
 	else:
-		relative_velocity *= exp(-JETPACK_DRAG * delta)
-		var thrust_dir := (wish_dir + up_dir * Input.get_axis("sprint", "jump")).limit_length(1.0)
-		relative_velocity += thrust_dir * JETPACK_ACCEL * delta
+		# Vacuum keeps momentum: only an atmosphere drags, and only as thick as it
+		# actually is. Killing speed is the brake's job, not a hidden drag term.
+		var air_density := _atmosphere_density(surface_source)
+		if air_density > 0.0:
+			relative_velocity *= exp(-JETPACK_DRAG * air_density * delta)
+		var thrust_up := global_basis.y if _free_look else up_dir
+		if not _free_look:
+			wish_dir -= thrust_up * wish_dir.dot(thrust_up)
+		var jetpack_up := 0.0
+		if _jetpack_armed and jump_pressed:
+			jetpack_up += 1.0
+		if Input.is_action_pressed("sprint"):
+			jetpack_up -= 1.0
+		relative_velocity += (wish_dir.limit_length(1.0) + thrust_up * jetpack_up) * JETPACK_ACCEL * delta
+		if _jump_hold_time >= 0.0 and jump_pressed and _jump_hold_time < JUMP_HOLD_TIME and relative_velocity.dot(up_dir) > 0.0:
+			relative_velocity += up_dir * JUMP_HOLD_ACCEL * delta
+			_jump_hold_time += delta
+		else:
+			_jump_hold_time = -1.0
 		if Input.is_action_pressed("brake"):
 			relative_velocity = relative_velocity.move_toward(Vector3.ZERO, JETPACK_BRAKE * delta)
 	relative_velocity += environment_force * delta
@@ -213,16 +279,29 @@ func set_fast_time_enabled(enabled: bool) -> void:
 		_fast_time_on_surface = false
 
 
-func _align_to_up(delta: float) -> void:
-	if global_basis.y.angle_to(up_dir) < 0.001:
+func _align_to_up(delta: float, rate: float) -> void:
+	if rate <= 0.0 or global_basis.y.angle_to(up_dir) < 0.001:
 		return
-	var target := global_basis
-	target.y = up_dir
-	target.x = -global_basis.z.cross(up_dir)
-	if target.x.length_squared() < 0.0001:
-		target.x = global_basis.x
-	target = target.orthonormalized()
-	global_basis = global_basis.slerp(target, clampf(ALIGN_SPEED * delta, 0.0, 1.0)).orthonormalized()
+	# Project the current facing onto the tangent plane. Looking straight along
+	# `up_dir` that projection vanishes, so fall back on the old up axis: nose
+	# down, the body keeps turning instead of stalling until the view drifts.
+	var back := global_basis.z - up_dir * up_dir.dot(global_basis.z)
+	if back.length_squared() < 0.0001:
+		back = global_basis.y - up_dir * up_dir.dot(global_basis.y)
+	if back.length_squared() < 0.0001:
+		back = global_basis.x - up_dir * up_dir.dot(global_basis.x)
+	back = back.normalized()
+	var target := Basis(up_dir.cross(back), up_dir, back).orthonormalized()
+	global_basis = global_basis.slerp(target, clampf(rate * delta, 0.0, 1.0)).orthonormalized()
+
+
+func _atmosphere_density(source: Node3D) -> float:
+	if source == null or not bool(source.get("has_atmosphere")):
+		return 0.0
+	var thickness := float(source.get("radius")) * float(source.get("atmosphere_scale"))
+	if thickness <= 0.0:
+		return 0.0
+	return clampf(1.0 - _ground_clearance(source) / thickness, 0.0, 1.0)
 
 
 func set_piloting(value: bool) -> void:
@@ -232,6 +311,9 @@ func set_piloting(value: bool) -> void:
 	camera.current = not value
 	velocity = Vector3.ZERO
 	frame_source = null
+	_jump_hold_time = -1.0
+	_jetpack_armed = true
+	_free_look = false
 	if not value:
 		_update_prompt()
 
@@ -241,6 +323,9 @@ func reset(t: Transform3D, inherited_velocity := Vector3.ZERO) -> void:
 	velocity = inherited_velocity
 	frame_source = null
 	camera.rotation = Vector3.ZERO
+	_jump_hold_time = -1.0
+	_jetpack_armed = true
+	_free_look = false
 	var gravity: Vector3 = gravity_service.get_gravity(global_position)
 	if gravity.length_squared() > 0.0001:
 		up_dir = -gravity.normalized()

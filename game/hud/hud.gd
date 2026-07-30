@@ -43,7 +43,7 @@ var ui_scale := 1.0
 @onready var gravity_service: GravityService = get_node("/root/Gravity")
 @onready var touch_service: TouchService = get_node("/root/Touch")
 
-const HINT_FOOT := "WASD walk · Space jump/jetpack in air · Shift sprint/descend · X brake · E interact · Tab map · R respawn"
+const HINT_FOOT := "WASD walk · Space jump (hold higher, press again in air for jetpack) · Shift sprint/descend · X brake · E interact · Tab map · R respawn"
 const HINT_SHIP := "WASD thrust · Space/Shift up/down · Mouse steer · LMB lock · Z/C roll · X brake · Tab map · E exit"
 const MARKER_MARGIN := 42.0
 const SHIP_COLOR := Color(0.35, 0.85, 1.0, 0.9)
