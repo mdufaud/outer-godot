@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://diu4qwyykt1jo"
+path="res://.godot/imported/ocean_effect.glsl-f3be190b40526379c0607f7b77c9435b.res"
+
+[deps]
+
+source_file="res://game/rendering/shaders/ocean_effect.glsl"
+dest_files=["res://.godot/imported/ocean_effect.glsl-f3be190b40526379c0607f7b77c9435b.res"]
+
+[params]
+

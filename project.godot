@@ -11,13 +11,13 @@ config_version=5
 [application]
 
 config/name="Outer Godot"
-run/main_scene="res://scenes/main.tscn"
+run/main_scene="res://game/bootstrap/main.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 
 [autoload]
 
-Gravity="*res://scripts/gravity.gd"
-Touch="*res://scripts/touch.gd"
+Gravity="*res://game/celestial/gravity.gd"
+Touch="*res://game/input/touch.gd"
 
 [display]
 

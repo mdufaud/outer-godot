@@ -7,8 +7,8 @@ extends SceneTree
 # surface-to-surface gap reached. A negative gap means a collision: move the
 # body, change its radius, or space the orbits further apart.
 
-const CelestialSystem := preload("res://scripts/celestial_system.gd")
-const SolarSystemContentScript := preload("res://scripts/solar_system_content.gd")
+const CelestialSystem := preload("res://game/celestial/celestial_system.gd")
+const SolarSystemManifestScript := preload("res://game/celestial/solar_system_manifest.gd")
 
 const SUN_RADIUS := 345.0
 const SUN_SURFACE_GRAVITY := 50.0
@@ -21,33 +21,38 @@ func _init() -> void:
 	if not OS.get_environment("HOURS").is_empty():
 		hours = float(OS.get_environment("HOURS"))
 
-	var names: Array[String] = ["Sun"]
+	var names: Array[StringName] = [&"sun"]
 	var positions: Array[Vector3] = [Vector3.ZERO]
 	var mu: Array[float] = [SUN_SURFACE_GRAVITY * SUN_RADIUS * SUN_RADIUS]
 	var radii: Array[float] = [SUN_RADIUS]
+	var orbit_parents := {}
 	var twin_positions: Array[Vector3] = []
 	var twin_mu: Array[float] = []
 	var twin_radii: Array[float] = []
 
-	for definition in SolarSystemContentScript.get_body_definitions():
-		var radius: float = definition.data.radius
-		var body_mu: float = float(definition.data.gravity) * radius * radius
-		if String(definition.name) in CelestialSystem.TWIN_NAMES:
-			twin_positions.append(definition.position)
+	for entry in SolarSystemManifestScript.get_entries():
+		var body: PlanetBody = entry.scene.instantiate()
+		var config: PlanetConfig = body.create_planet_config()
+		var radius := config.radius
+		var body_mu := config.surface_gravity * radius * radius
+		if not entry.binary_group_id.is_empty():
+			twin_positions.append(entry.initial_position)
 			twin_mu.append(body_mu)
 			twin_radii.append(radius)
 			continue
-		names.append(definition.name)
-		positions.append(definition.position)
+		var entry_id := entry.body_id.to_lower()
+		names.append(entry_id)
+		positions.append(entry.initial_position)
 		mu.append(body_mu)
 		radii.append(radius)
+		orbit_parents[entry_id] = entry.orbit_parent_id
 
 	if twin_positions.size() == 2:
 		# The twins run as a rigid binary, so they enter as one barycentre whose
 		# radius covers the whole pair.
 		var total_mu: float = twin_mu[0] + twin_mu[1]
 		var barycenter: Vector3 = (twin_positions[0] * twin_mu[0] + twin_positions[1] * twin_mu[1]) / total_mu
-		names.append(CelestialSystem.TWIN_ENTRY)
+		names.append(&"twins")
 		positions.append(barycenter)
 		mu.append(total_mu)
 		radii.append(maxf(
@@ -59,10 +64,11 @@ func _init() -> void:
 		print("twin binary: separation %.1f, fixed surface gap %.1f" % [separation, pair_gap])
 		if pair_gap <= 0.0:
 			print("  ERROR: twins overlap at rest")
+		orbit_parents[&"twins"] = &"sun"
 
 	var state := CelestialSystem.pack_state(positions)
-	var velocities := CelestialSystem.pack_state(CelestialSystem.compute_initial_velocities(names, positions, mu))
-	var pair_mu := CelestialSystem.build_pair_mu(names, mu)
+	var velocities := CelestialSystem.pack_state(CelestialSystem.compute_initial_velocities(names, positions, mu, orbit_parents))
+	var pair_mu := CelestialSystem.build_pair_mu(names, mu, orbit_parents)
 
 	var start_distance: Array[float] = []
 	var min_solar: Array[float] = []

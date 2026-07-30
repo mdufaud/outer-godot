@@ -8,6 +8,9 @@ export_presets.cfg
 tests/*
 !tests/planet_gallery.gd
 !tests/planet_gallery.tscn
-!tests/bonification_test.gd
+!tests/integration/
+!tests/integration/**
+!tests/shared/
+!tests/shared/**
 .claude
 tmp/

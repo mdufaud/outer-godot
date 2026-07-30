@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://b52sr6mp406v3"
+path="res://.godot/imported/atmosphere_effect.glsl-b78185057622fc2d1953fa381a41a72e.res"
+
+[deps]
+
+source_file="res://game/rendering/shaders/atmosphere_effect.glsl"
+dest_files=["res://.godot/imported/atmosphere_effect.glsl-b78185057622fc2d1953fa381a41a72e.res"]
+
+[params]
+

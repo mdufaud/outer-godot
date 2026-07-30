@@ -1,10 +1,10 @@
 extends Node3D
 
-const PLANET_SCENE := preload("res://scenes/planet.tscn")
-const SHIP_SCENE := preload("res://scenes/ship.tscn")
-const SUN_SCENE := preload("res://scenes/sun.tscn")
-const SOLAR_SYSTEM_CONTENT := preload("res://scripts/solar_system_content.gd")
-const PLANET_EFFECTS := preload("res://scripts/planet_effects.gd")
+const SHIP_SCENE := preload("res://game/ship/ship.tscn")
+const SUN_SCENE := preload("res://game/sun/sun.tscn")
+const SOLAR_SYSTEM_MANIFEST := preload("res://game/celestial/solar_system_manifest.gd")
+const PLANET_EFFECTS := preload("res://game/rendering/planet_effects.gd")
+const StarsShader := preload("res://game/rendering/shaders/stars.gdshader")
 
 const GALLERY_COLUMNS := 3
 const GALLERY_COLUMN_SPACING := 520.0
@@ -108,7 +108,7 @@ func _build_environment() -> void:
     var environment := Environment.new()
     var sky := Sky.new()
     _sky_material = ShaderMaterial.new()
-    _sky_material.shader = preload("res://shaders/stars.gdshader")
+    _sky_material.shader = StarsShader
     sky.sky_material = _sky_material
     environment.background_mode = Environment.BG_SKY
     environment.sky = sky
@@ -160,58 +160,16 @@ func _build_camera() -> void:
 
 
 func _build_planets() -> void:
-    var definitions: Array[Dictionary] = SOLAR_SYSTEM_CONTENT.get_body_definitions()
-    for index in definitions.size():
-        var definition: Dictionary = definitions[index]
-        var body := PLANET_SCENE.instantiate()
-        body.name = String(definition.name)
-        body.set("quality_profile", _quality_profile())
-        _apply_body_data(body, definition.data)
+    var entries: Array[CelestialEntry] = SOLAR_SYSTEM_MANIFEST.get_entries()
+    for index in entries.size():
+        var entry: CelestialEntry = entries[index]
+        var body: PlanetBody = entry.scene.instantiate()
+        body.name = String(entry.body_id)
+        body.quality_override = StringName(_quality_profile())
         body.position = _gallery_position(index)
         add_child(body)
         _planets.append(body)
-        _add_planet_label(body, String(definition.name), float(definition.data.radius))
-
-
-func _apply_body_data(body: Node3D, data: Dictionary) -> void:
-    var property_map := {
-        "body_kind": "body_kind",
-        "surface_style": "surface_style",
-        "radius": "radius",
-        "core_radius": "core_radius",
-        "gravity": "surface_gravity",
-        "seed": "rng_seed",
-        "perturb_strength": "perturb_strength",
-        "ocean": "has_ocean",
-        "ocean_level": "ocean_level",
-        "ocean_shallow_color": "ocean_shallow_color",
-        "ocean_deep_color": "ocean_deep_color",
-        "ocean_wave_strength": "ocean_wave_strength",
-        "ocean_wave_scale": "ocean_wave_scale",
-        "ocean_wave_speed": "ocean_wave_speed",
-        "ocean_smoothness": "ocean_smoothness",
-        "ocean_depth_multiplier": "ocean_depth_multiplier",
-        "ocean_alpha_multiplier": "ocean_alpha_multiplier",
-        "ocean_specular_color": "ocean_specular_color",
-        "ocean_foam_scale": "ocean_foam_scale",
-        "ocean_foam_distance": "ocean_foam_distance",
-        "ocean_refraction_strength": "ocean_refraction_strength",
-        "underwater_tint": "underwater_tint",
-        "underwater_darkness": "underwater_darkness",
-        "atmosphere": "has_atmosphere",
-        "atmosphere_color": "atmosphere_color",
-        "atmosphere_scale": "atmosphere_scale",
-        "atmosphere_density_falloff": "atmosphere_density_falloff",
-        "atmosphere_wavelengths": "atmosphere_wavelengths",
-        "atmosphere_scattering_strength": "atmosphere_scattering_strength",
-        "atmosphere_intensity": "atmosphere_intensity",
-        "shore_color": "shore_color",
-        "land_low_color": "land_low_color",
-        "land_high_color": "land_high_color",
-    }
-    for key in property_map:
-        if data.has(key):
-            body.set(property_map[key], data[key])
+        _add_planet_label(body, String(entry.body_id), body.radius)
 
 
 func _quality_profile() -> String:
@@ -476,7 +434,7 @@ func _apply_capture_item(item: Dictionary) -> void:
 
 
 func _all_planets_ready() -> bool:
-    if _planets.size() != SOLAR_SYSTEM_CONTENT.get_body_definitions().size():
+    if _planets.size() != SOLAR_SYSTEM_MANIFEST.get_entries().size():
         return false
     for planet in _planets:
         if not planet.has_method("is_boot_ready") or not bool(planet.call("is_boot_ready")):
