@@ -1,16 +1,8 @@
 extends SceneTree
 
 const CyclopsGeometryScript := preload("res://game/planets/cyclops/cyclops_geometry.gd")
-const SolarSystemManifestScript := preload("res://game/celestial/solar_system_manifest.gd")
+const TestWorldScript := preload("res://tests/shared/test_world.gd")
 
-# radius / ocean_level / core_radius triples: authored, double, half, and ocean_level moved alone.
-const CONFIGURATIONS := [
-	[145.0, 20.0, 72.5],
-	[290.0, 40.0, 145.0],
-	[72.5, 10.0, 36.25],
-	[145.0, 5.0, 72.5],
-	[145.0, 60.0, 72.5],
-]
 const SAMPLE_COUNT := 200
 
 var failures: Array[String] = []
@@ -21,9 +13,8 @@ func _init() -> void:
 
 
 func _run() -> void:
-	_test_authored_definition_matches_first_configuration()
 	var reference := {}
-	for configuration in CONFIGURATIONS:
+	for configuration in _configurations():
 		_test_configuration(configuration[0], configuration[1], configuration[2], reference)
 	if failures.is_empty():
 		print("Cyclops geometry tests passed")
@@ -34,18 +25,21 @@ func _run() -> void:
 		quit(1)
 
 
-# Guards the test itself: if Cyclops is re-authored, the first configuration must follow.
-func _test_authored_definition_matches_first_configuration() -> void:
-	for entry in SolarSystemManifestScript.get_entries():
-		if entry.body_id != &"Cyclops":
-			continue
-		var body: PlanetBody = entry.scene.instantiate()
-		var config: PlanetConfig = body.create_planet_config()
-		_expect(is_equal_approx(config.radius, CONFIGURATIONS[0][0]), "Cyclops radius changed")
-		_expect(is_equal_approx(config.ocean.level, CONFIGURATIONS[0][1]), "Cyclops ocean level changed")
-		_expect(is_equal_approx(config.core_radius, CONFIGURATIONS[0][2]), "Cyclops core radius changed")
-		return
-	_expect(false, "Cyclops is missing from the solar system definitions")
+# radius / ocean_level / core_radius triples, all derived from whatever Cyclops is currently authored
+# as: the authored size, double, half, and the ocean level moved on its own. Retuning the planet moves
+# the whole set, so the geometry relations are what is under test, never the numbers.
+func _configurations() -> Array:
+	var config := TestWorldScript.authored_config(&"Cyclops")
+	if config == null:
+		_expect(false, "Cyclops is missing from the solar system definitions")
+		return []
+	return [
+		[config.radius, config.ocean.level, config.core_radius],
+		[config.radius * 2.0, config.ocean.level * 2.0, config.core_radius * 2.0],
+		[config.radius * 0.5, config.ocean.level * 0.5, config.core_radius * 0.5],
+		[config.radius, config.ocean.level * 0.25, config.core_radius],
+		[config.radius, config.ocean.level * 3.0, config.core_radius],
+	]
 
 
 func _test_configuration(radius: float, ocean_level: float, core_radius: float, reference: Dictionary) -> void:
