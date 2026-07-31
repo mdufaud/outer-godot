@@ -43,8 +43,8 @@ var ui_scale := 1.0
 @onready var gravity_service: GravityService = get_node("/root/Gravity")
 @onready var touch_service: TouchService = get_node("/root/Touch")
 
-const HINT_FOOT := "WASD walk · Space jump (hold higher, press again in air for jetpack) · Shift sprint/descend · X brake · E interact · Tab map · R respawn"
-const HINT_SHIP := "WASD thrust · Space/Shift up/down · Mouse steer · LMB lock · Z/C roll · X brake · Tab map · E exit"
+const HINT_FOOT := "Left stick move · Right stick look · A jump · LT sprint/descend · B brake · X interact · View map · Y respawn"
+const HINT_SHIP := "Left stick thrust · Right stick steer · A/LT up/down · RT/B brake · LB/RB roll · R3 lock · Menu/View map · X exit"
 const MARKER_MARGIN := 42.0
 const SHIP_COLOR := Color(0.35, 0.85, 1.0, 0.9)
 const PLANET_COLOR := Color(1.0, 0.82, 0.42, 0.82)
@@ -318,12 +318,14 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch and event.pressed and _handle_touch_ui(event.position):
 		get_viewport().set_input_as_handled()
 		return
-	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_TAB or event.physical_keycode == KEY_TAB:
-			planet_markers_visible = not planet_markers_visible
-			get_viewport().set_input_as_handled()
-	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed and ship != null:
-		if not is_mouse_over_ui(event.position):
+	if event.is_action_pressed("map") or (event is InputEventKey and event.pressed and not event.echo and (event.keycode == KEY_TAB or event.physical_keycode == KEY_TAB)):
+		planet_markers_visible = not planet_markers_visible
+		get_viewport().set_input_as_handled()
+	elif event.is_action_pressed("lock_target") or (event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed):
+		if ship == null:
+			return
+		var over_ui := event is InputEventMouseButton and is_mouse_over_ui(event.position)
+		if not over_ui:
 			locked_body = null if locked_body == aimed_body else aimed_body
 			get_viewport().set_input_as_handled()
 

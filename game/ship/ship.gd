@@ -7,6 +7,7 @@ const THRUST_ACCEL := 40.0
 const BRAKE_ACCEL := 45.0
 const TORQUE := 26.0
 const MOUSE_TORQUE := 0.06
+const STICK_TORQUE := 0.5
 const WATER_HALF_HEIGHT := 2.7
 const WATER_BUOYANCY := 1.15
 const WATER_LINEAR_DRAG := 2.0
@@ -275,9 +276,10 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 	var look := mouse_delta + touch_service.look_delta
 	mouse_delta = Vector2.ZERO
 	touch_service.look_delta = Vector2.ZERO
+	var look_stick := Input.get_vector("look_left", "look_right", "look_up", "look_down")
 	var rot_input := Vector3(
-		clampf(-look.y * MOUSE_TORQUE, -6.0, 6.0),
-		clampf(-look.x * MOUSE_TORQUE, -6.0, 6.0),
+		clampf(-look.y * MOUSE_TORQUE - look_stick.y * STICK_TORQUE, -6.0, 6.0),
+		clampf(-look.x * MOUSE_TORQUE - look_stick.x * STICK_TORQUE, -6.0, 6.0),
 		Input.get_axis("roll_right", "roll_left")
 	)
 	if rot_input.length_squared() > 0.0:

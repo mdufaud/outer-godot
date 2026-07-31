@@ -23,6 +23,7 @@ const GROUND_PROBE_DISTANCE := 0.2
 const GROUND_LERP := 10.0
 const FLOOR_MAX_ANGLE := 65.0
 const MOUSE_SENS := 0.002
+const STICK_LOOK_SPEED := 3.0
 const ALIGN_SPEED_GROUND := 10.0
 const ALIGN_FADE_ALTITUDE := 1.5
 const FREE_LOOK_ROLL_SPEED := 1.8
@@ -126,6 +127,9 @@ func _physics_process(delta: float) -> void:
 	if touch_service.look_delta != Vector2.ZERO:
 		_apply_look(touch_service.look_delta)
 		touch_service.look_delta = Vector2.ZERO
+	var look_stick := Input.get_vector("look_left", "look_right", "look_up", "look_down")
+	if look_stick.length_squared() > 0.0001:
+		_apply_look(look_stick * STICK_LOOK_SPEED * delta / MOUSE_SENS)
 	if _fast_time_enabled and not _fast_time_on_surface:
 		velocity = Vector3.ZERO
 		frame_source = null
