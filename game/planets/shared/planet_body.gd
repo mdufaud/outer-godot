@@ -27,6 +27,7 @@ const OCEAN_FOAM_COLOR := Color(0.92, 0.98, 1.0)
 const ATMOSPHERE_DITHER_STRENGTH := 0.3
 const ATMOSPHERE_DITHER_SCALE := 3.89
 const ATMOSPHERE_SCATTERING_POINTS := 10
+const MAX_WEATHER_CONTACTS := 9
 
 var config: PlanetConfig
 var body_id: StringName = &"Planet"
@@ -630,7 +631,7 @@ func _build_ocean() -> void:
 		underwater_tint.r, underwater_tint.g, underwater_tint.b, underwater_darkness,
 		swell_height, ocean_swell_wavelength, ocean_swell_speed, 0.0,
 	])
-	for index in weather_contact_count:
+	for index in MAX_WEATHER_CONTACTS:
 		_ocean_params.append_array(PackedFloat32Array([0.0, 0.0, 0.0, 0.0]))
 
 
