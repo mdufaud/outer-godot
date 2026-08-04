@@ -61,7 +61,7 @@ func update_from_bodies(camera_position: Vector3, candidates: Array) -> void:
 	var bodies: Array = []
 	var camera: Camera3D
 	for body in candidates:
-		if body.has_method("get_ocean_effect_params"):
+		if body.has_method("get_ocean_effect_params") and body.visible:
 			bodies.append(body)
 			if camera == null:
 				camera = body.get_viewport().get_camera_3d()

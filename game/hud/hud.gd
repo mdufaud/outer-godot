@@ -30,6 +30,7 @@ var planet_buttons: Array[Button] = []
 var debug_buttons: Array[Button] = []
 var gravity_button: Button
 var orbit_button: Button
+var supernova_button: Button
 var navigation_overlay: NavigationOverlay
 var globe: Control
 var planet_markers_visible := false
@@ -240,10 +241,20 @@ func _build_gravity_debug_panel() -> void:
 	_make_ui_button(orbit_button)
 	orbit_button.toggled.connect(_on_orbit_fast_forward_toggled)
 	buttons.add_child(orbit_button)
+	supernova_button = Button.new()
+	supernova_button.name = "SupernovaTrigger"
+	supernova_button.text = "Supernova"
+	supernova_button.custom_minimum_size = Vector2(0.0, 38.0 * ui_scale)
+	supernova_button.focus_mode = Control.FOCUS_NONE
+	supernova_button.add_theme_font_size_override("font_size", _px(13))
+	_apply_button_theme(supernova_button, Color(1.0, 0.35, 0.25))
+	_make_ui_button(supernova_button)
+	supernova_button.pressed.connect(_on_supernova_pressed)
+	buttons.add_child(supernova_button)
 	content.add_child(buttons)
 	panel.add_child(content)
 	teleport_root.add_child(panel)
-	debug_buttons = [gravity_button, orbit_button]
+	debug_buttons = [gravity_button, orbit_button, supernova_button]
 
 
 func _on_gravity_debug_toggled(enabled: bool) -> void:
@@ -258,6 +269,12 @@ func _on_orbit_fast_forward_toggled(enabled: bool) -> void:
 	var celestial_system := get_tree().get_first_node_in_group("celestial_system")
 	if celestial_system != null:
 		celestial_system.set_fast_forward_enabled(enabled)
+
+
+func _on_supernova_pressed() -> void:
+	var sun := get_tree().get_first_node_in_group("sun")
+	if sun != null and sun.has_method("detonate"):
+		sun.detonate()
 
 
 func layout_panels() -> void:
@@ -367,6 +384,9 @@ func _handle_touch_ui(position_value: Vector2) -> bool:
 	if orbit_button != null and orbit_button.get_global_rect().has_point(position_value):
 		orbit_button.set_pressed_no_signal(not orbit_button.button_pressed)
 		_on_orbit_fast_forward_toggled(orbit_button.button_pressed)
+		return true
+	if supernova_button != null and supernova_button.get_global_rect().has_point(position_value):
+		_on_supernova_pressed()
 		return true
 	return false
 

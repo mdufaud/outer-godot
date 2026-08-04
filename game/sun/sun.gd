@@ -2,8 +2,11 @@ extends Node3D
 
 const SunFXScript := preload("res://game/sun/sun_fx.gd")
 const GravityServiceScript := preload("res://game/celestial/gravity.gd")
+const SupernovaScript := preload("res://game/sun/supernova.gd")
 const SunShader := preload("res://game/sun/shaders/sun.gdshader")
 const CoronaShader := preload("res://game/sun/shaders/corona.gdshader")
+
+const BASE_EMISSION := 9.0
 
 @export var radius := 120.0
 @export var surface_gravity := 0.2
@@ -11,6 +14,7 @@ const CoronaShader := preload("res://game/sun/shaders/corona.gdshader")
 
 var influence_radius := 2600.0
 var orbital_velocity := Vector3.ZERO
+var supernova: Supernova
 @onready var gravity_service: GravityService = get_node("/root/Gravity")
 
 
@@ -26,11 +30,13 @@ func _ready() -> void:
 	var mat := ShaderMaterial.new()
 	mat.shader = SunShader
 	mat.set_shader_parameter("pulse_enabled", SunFXScript.PULSE)
+	mat.set_shader_parameter("emission_strength", BASE_EMISSION)
 	sphere.material = mat
 	mesh.mesh = sphere
 	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mesh)
 
+	var visuals: Array[Node3D] = [mesh]
 	if SunFXScript.HALO:
 		var corona := MeshInstance3D.new()
 		var corona_quad := QuadMesh.new()
@@ -50,6 +56,7 @@ func _ready() -> void:
 		corona.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		corona.extra_cull_margin = radius * corona_scale
 		add_child(corona)
+		visuals.append(corona)
 
 	var death_zone := Area3D.new()
 	var col := CollisionShape3D.new()
@@ -59,11 +66,24 @@ func _ready() -> void:
 	death_zone.add_child(col)
 	death_zone.body_entered.connect(_on_body_entered)
 	add_child(death_zone)
+
+	supernova = SupernovaScript.new()
+	supernova.name = "Supernova"
+	add_child(supernova)
+	supernova.setup(visuals, mesh, radius, BASE_EMISSION)
 	gravity_service.register(self)
 
 
 func _exit_tree() -> void:
 	gravity_service.unregister(self)
+
+
+func detonate() -> void:
+	supernova.detonate()
+
+
+func is_exploding() -> bool:
+	return supernova != null and supernova.is_active()
 
 
 func get_gravitational_parameter() -> float:

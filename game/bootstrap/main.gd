@@ -346,7 +346,10 @@ func _update_sky(camera: Camera3D) -> void:
 	_sky_material.set_shader_parameter("camera_position", camera.global_position)
 	var camera_to_sun := sun.global_position - camera.global_position
 	_sky_material.set_shader_parameter("sun_direction", camera_to_sun.normalized())
-	_sky_material.set_shader_parameter("sun_glow_strength", distant_sun_glow_strength(camera_to_sun.length(), float(sun.get("radius"))))
+	# The fake distant sun and the real exploding mesh must not overlap once the supernova
+	# pushes the camera far plane past the sun.
+	var glow_strength := 0.0 if bool(sun.call("is_exploding")) else distant_sun_glow_strength(camera_to_sun.length(), float(sun.get("radius")))
+	_sky_material.set_shader_parameter("sun_glow_strength", glow_strength)
 	var weather_source := _get_weather_source(camera.global_position)
 	var weather_feedback: Dictionary = weather_source.get_weather_feedback(camera.global_position) if weather_source != null else {}
 	var storm_occlusion := float(weather_feedback.get("sky_occlusion", 0.0))
