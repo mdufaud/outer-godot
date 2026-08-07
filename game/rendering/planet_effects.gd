@@ -67,7 +67,12 @@ func update_from_bodies(camera_position: Vector3, candidates: Array) -> void:
 				camera = body.get_viewport().get_camera_3d()
 	bodies.sort_custom(func(first, second):
 		return _sort_distance(first, camera_position) > _sort_distance(second, camera_position))
-	var frustum: Array[Plane] = camera.get_frustum() if camera != null else []
+	# Every body can be gone once the leviathan has eaten them, and the camera is
+	# only ever found through one of them, so the empty case has to be typed by
+	# hand: the ternary would hand back an untyped array and fail the assignment.
+	var frustum: Array[Plane] = []
+	if camera != null:
+		frustum = camera.get_frustum()
 
 	var passes := PackedInt32Array()
 	var ocean_data := PackedFloat32Array()
@@ -192,6 +197,13 @@ func _render_callback(callback_type: int, render_data: RenderData) -> void:
 	for pass_index in pass_count:
 		var kind := passes[pass_index * 2]
 		var body_index := passes[pass_index * 2 + 1]
+		# A destroyed body frees its atmosphere lookup table, which takes every
+		# uniform set built on it down too, and this snapshot can still name one.
+		# RID.is_valid only says the handle is non-zero, so ask the device itself.
+		# Dropping the pass leaves the ping-pong parity alone: nothing was written.
+		if kind == KIND_ATMOSPHERE and not rendering_device.uniform_set_is_valid(
+				_uniform_sets.get("lut_%d" % body_index, RID())):
+			continue
 		var shader_key := "ocean" if kind == KIND_OCEAN else "atmosphere"
 		var push_constant := _build_push_constant(inverse_view_projection, camera_transform.origin, time, size, body_index)
 		rendering_device.compute_list_bind_compute_pipeline(command_list, _pipelines[shader_key])

@@ -31,6 +31,7 @@ var debug_buttons: Array[Button] = []
 var gravity_button: Button
 var orbit_button: Button
 var supernova_button: Button
+var leviathan_button: Button
 var navigation_overlay: NavigationOverlay
 var globe: Control
 var planet_markers_visible := false
@@ -251,10 +252,20 @@ func _build_gravity_debug_panel() -> void:
 	_make_ui_button(supernova_button)
 	supernova_button.pressed.connect(_on_supernova_pressed)
 	buttons.add_child(supernova_button)
+	leviathan_button = Button.new()
+	leviathan_button.name = "LeviathanTrigger"
+	leviathan_button.text = "Leviathan"
+	leviathan_button.custom_minimum_size = Vector2(0.0, 38.0 * ui_scale)
+	leviathan_button.focus_mode = Control.FOCUS_NONE
+	leviathan_button.add_theme_font_size_override("font_size", _px(13))
+	_apply_button_theme(leviathan_button, Color(0.72, 0.12, 0.34))
+	_make_ui_button(leviathan_button)
+	leviathan_button.pressed.connect(_on_leviathan_pressed)
+	buttons.add_child(leviathan_button)
 	content.add_child(buttons)
 	panel.add_child(content)
 	teleport_root.add_child(panel)
-	debug_buttons = [gravity_button, orbit_button, supernova_button]
+	debug_buttons = [gravity_button, orbit_button, supernova_button, leviathan_button]
 
 
 func _on_gravity_debug_toggled(enabled: bool) -> void:
@@ -275,6 +286,29 @@ func _on_supernova_pressed() -> void:
 	var sun := get_tree().get_first_node_in_group("sun")
 	if sun != null and sun.has_method("detonate"):
 		sun.detonate()
+
+
+# Summons on the first press, sends it back on the second — but only while it is
+# still approaching. Once it starts eating there is no calling it off.
+func _on_leviathan_pressed() -> void:
+	var leviathan := get_tree().get_first_node_in_group("leviathan")
+	if leviathan == null:
+		return
+	if bool(leviathan.call("is_active")):
+		leviathan.call("banish")
+	else:
+		leviathan.call("summon")
+	_refresh_leviathan_button()
+
+
+func _refresh_leviathan_button() -> void:
+	if leviathan_button == null:
+		return
+	var leviathan := get_tree().get_first_node_in_group("leviathan")
+	var active := leviathan != null and bool(leviathan.call("is_active"))
+	var devouring := leviathan != null and bool(leviathan.call("is_devouring"))
+	leviathan_button.text = "Feeding" if devouring else ("Banish" if active else "Leviathan")
+	leviathan_button.disabled = devouring
 
 
 func layout_panels() -> void:
@@ -388,6 +422,10 @@ func _handle_touch_ui(position_value: Vector2) -> bool:
 	if supernova_button != null and supernova_button.get_global_rect().has_point(position_value):
 		_on_supernova_pressed()
 		return true
+	if leviathan_button != null and leviathan_button.get_global_rect().has_point(position_value):
+		if not leviathan_button.disabled:
+			_on_leviathan_pressed()
+		return true
 	return false
 
 
@@ -415,6 +453,7 @@ func is_mouse_over_ui(position_value: Vector2) -> bool:
 
 
 func _process(_delta: float) -> void:
+	_refresh_leviathan_button()
 	if ship == null:
 		info_label.text = ""
 		aimed_body = null

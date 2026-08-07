@@ -21,6 +21,7 @@ const TouchServiceScript := preload("res://game/input/touch.gd")
 const PlanetBodyScript := preload("res://game/planets/shared/planet_body.gd")
 const FloatingOriginScript := preload("res://game/celestial/floating_origin.gd")
 const SunFXScript := preload("res://game/sun/sun_fx.gd")
+const LeviathanScript := preload("res://game/leviathan/leviathan.gd")
 
 const SUN_RADIUS := 345.0
 const SUN_SURFACE_GRAVITY := 50.0
@@ -138,6 +139,12 @@ func _boot() -> void:
 	var floating_origin := FloatingOriginScript.new()
 	floating_origin.name = "FloatingOrigin"
 	add_child(floating_origin)
+	var leviathan := LeviathanScript.new()
+	leviathan.name = "Leviathan"
+	add_child(leviathan)
+	# The ambience already mixes against a dread factor; the leviathan is what
+	# finally drives it, so the wind and the ocean die when it shows up.
+	_dread_pulse = leviathan
 	_loaded = true
 	_log_boot("Boot complete")
 	_loading_screen.finish()
@@ -506,6 +513,18 @@ func respawn() -> void:
 
 func spawn_on_planet(body: PlanetBody) -> bool:
 	return _spawn_controller.spawn_on_planet(body)
+
+
+# A destroyed body must not survive in the lookups, or teleporting and respawning
+# would hand out freed instances.
+func forget_body(body: Node3D) -> void:
+	for body_id in _bodies_by_id.keys():
+		if _bodies_by_id[body_id] == body:
+			_bodies_by_id.erase(body_id)
+	if earth == body:
+		earth = null
+	if moon == body:
+		moon = null
 
 
 func spawn_on_planet_id(body_name: StringName) -> bool:

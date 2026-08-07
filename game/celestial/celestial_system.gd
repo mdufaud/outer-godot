@@ -158,6 +158,10 @@ func is_fast_forward_enabled() -> bool:
 	return _time_multiplier != 1.0
 
 
+# Bodies can be destroyed mid-flight by the leviathan. Their slot keeps orbiting
+# in the integrator arrays — resizing those would mean rebuilding every pair mass
+# and ancestor chain in flight for no visible gain — but nothing may be written
+# to a freed node.
 func _publish_states() -> void:
 	for index in bodies.size():
 		var entry := _entry_of_body[index]
@@ -165,12 +169,16 @@ func _publish_states() -> void:
 			continue
 		if entry == _binary_entry:
 			continue
+		if not is_instance_valid(bodies[index]):
+			continue
 		bodies[index].set_orbital_state(read_state(_positions, entry), read_state(_velocities, entry) * _time_multiplier)
 	if _binary_entry == -1:
 		return
 	var barycenter := read_state(_positions, _binary_entry)
 	var barycenter_velocity := read_state(_velocities, _binary_entry)
 	for index in _binary_bodies.size():
+		if not is_instance_valid(_binary_bodies[index]):
+			continue
 		var offset: Vector3 = _binary_offsets[index].rotated(Vector3.UP, _binary_angle)
 		var spin := Vector3.UP.cross(offset) * _binary_angular_speed
 		_binary_bodies[index].set_orbital_state(barycenter + offset, (barycenter_velocity + spin) * _time_multiplier)

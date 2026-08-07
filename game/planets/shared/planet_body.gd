@@ -179,6 +179,17 @@ func _ready() -> void:
 
 
 func _exit_tree() -> void:
+	# A dispatched task holds its bound job dictionary, and with it the terrain
+	# mesh, inside the pool until something waits on it. A body destroyed mid-boot
+	# never does, so the mesh outlives the rendering server and its RIDs are still
+	# allocated at exit. The leviathan eats planets at any point in their boot, so
+	# this drain is not a corner case.
+	for job in _boot_jobs:
+		if job.phase == "topology_wait" or job.phase == "build_wait":
+			WorkerThreadPool.wait_for_task_completion(int(job.task_id))
+			# Both tasks are idempotent, so the phase goes back to the one that
+			# dispatches rather than to a wait on a task id that no longer exists.
+			job.phase = "topology" if job.phase == "topology_wait" else "build"
 	if _height_generator != null and _height_generator_initialized:
 		_height_generator.shutdown()
 	if _atmosphere_lut != null:
