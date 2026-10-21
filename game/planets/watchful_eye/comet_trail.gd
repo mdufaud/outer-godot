@@ -67,9 +67,9 @@ func _process(_delta: float) -> void:
 	# going, and the plume has to sit exactly behind it. The anti-solar direction
 	# only gets to bend the axis a little.
 	var axis := anti_solar
-	var velocity: Variant = target.get("orbital_velocity")
-	if velocity is Vector3 and (velocity as Vector3).length() > 0.001:
-		axis = (-(velocity as Vector3).normalized() + anti_solar * VELOCITY_BEND).normalized()
+	var velocity := target.get_parent_relative_velocity()
+	if velocity.length() > 0.001:
+		axis = (-velocity.normalized() + anti_solar * VELOCITY_BEND).normalized()
 	var up := Vector3.UP if absf(axis.y) < 0.9 else Vector3.RIGHT
 	# The box points +Z downwind, and looking_at aims -Z, hence the negated axis.
 	global_transform = Transform3D(Basis.looking_at(-axis, up), target.global_position - axis * _head_offset)

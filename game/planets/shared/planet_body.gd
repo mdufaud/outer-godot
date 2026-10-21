@@ -325,10 +325,10 @@ func get_boot_status() -> Dictionary:
 
 
 func set_orbital_state(next_position: Vector3, next_velocity: Vector3) -> void:
-	global_position = next_position
-	orbital_velocity = next_velocity
-	if shape_profile == PlanetShapeProfileScript.WATCHFUL_EYE and next_velocity.length_squared() > 0.000001:
-		var travel_direction := next_velocity.normalized()
+	super.set_orbital_state(next_position, next_velocity)
+	var travel := get_parent_relative_velocity()
+	if shape_profile == PlanetShapeProfileScript.WATCHFUL_EYE and travel.length_squared() > 0.000001:
+		var travel_direction := travel.normalized()
 		var up := Vector3.UP if absf(travel_direction.y) < 0.98 else Vector3.RIGHT
 		var eye_to_forward := Basis(Quaternion(WATCHFUL_EYE_DIRECTION.normalized(), Vector3.BACK))
 		_eye_basis = Basis.looking_at(-travel_direction, up) * eye_to_forward

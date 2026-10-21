@@ -57,6 +57,7 @@ func _initialize_simulation() -> void:
 		var body: CelestialBody = _body_by_id.get(entry.body_id)
 		if body == null:
 			continue
+		body.orbit_parent = _body_by_id.get(_entry_id_from_sim_id(entry.orbit_parent_id))
 		if entry.binary_group_id.is_empty():
 			bodies.append(body)
 			_sim_ids.append(entry.body_id.to_lower())

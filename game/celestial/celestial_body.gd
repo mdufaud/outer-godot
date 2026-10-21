@@ -5,6 +5,7 @@ var radius := 0.0
 var surface_gravity := 0.0
 var influence_radius := 0.0
 var orbital_velocity := Vector3.ZERO
+var orbit_parent: CelestialBody
 var has_ocean := false
 var ocean_level := 0.0
 var has_atmosphere := false
@@ -33,6 +34,13 @@ func get_environment_force(_world_position: Vector3) -> Vector3:
 
 func has_weather_capability() -> bool:
 	return false
+
+
+# Velocity in the frame of the body it orbits: what the player sees as its path.
+func get_parent_relative_velocity() -> Vector3:
+	if orbit_parent == null or not is_instance_valid(orbit_parent):
+		return orbital_velocity
+	return orbital_velocity - orbit_parent.orbital_velocity
 
 
 func set_orbital_state(next_position: Vector3, next_velocity: Vector3) -> void:
