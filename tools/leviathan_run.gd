@@ -90,7 +90,7 @@ func _run() -> void:
 			var image := root.get_texture().get_image()
 			image.save_png(ProjectSettings.globalize_path(path))
 			print("captured ", path, " at t=", _clock,
-				" maw_open=", _leviathan.call("maw_open_at", _clock),
+				" maw_open=", Leviathan.maw_open_at(Leviathan.distance_at(_clock, _leviathan._feed_distance)),
 				" on_screen=", _framing_report())
 		else:
 			await process_frame

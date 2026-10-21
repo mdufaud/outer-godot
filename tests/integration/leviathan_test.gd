@@ -39,6 +39,7 @@ func _init() -> void:
 func _run() -> void:
 	_test_presence()
 	_test_distance()
+	_test_fast_then_slow()
 	_test_maw()
 	_test_throat_contact()
 	_test_spawn_direction()
@@ -63,44 +64,71 @@ func _test_presence() -> void:
 
 
 func _test_distance() -> void:
-	_expect(is_equal_approx(LeviathanScript.distance_at(0.0), LeviathanScript.START_DISTANCE), "Must hold station while fading in")
-	_expect(is_equal_approx(LeviathanScript.distance_at(LeviathanScript.FADE_IN_DURATION), LeviathanScript.START_DISTANCE), "Must not move before the fade completes")
-	var previous := LeviathanScript.START_DISTANCE
-	for step in range(1, 31):
-		var distance := LeviathanScript.distance_at(LeviathanScript.FADE_IN_DURATION + float(step))
-		_expect(distance < previous, "Approach must close in at second %d" % step)
-		previous = distance
-	# The maw front carries on past the sun, or the sun sits in the teeth with
-	# the throat that eats it still a throat's depth short of it.
-	var ending := LeviathanScript.distance_at(
-		LeviathanScript.FADE_IN_DURATION + LeviathanScript.TRAVEL_DURATION)
-	_expect(ending < -SUN_RADIUS, "The dive must carry the sun past the fangs, ended at %.0f" % ending)
-	# Pivot z of a body the maw front has passed is how far the front is past it,
-	# and the throat box is measured from its own centre a throat's depth back.
-	_expect(LeviathanScript.in_throat(Vector3(0.0, 0.0, -ending - LeviathanScript.THROAT_DEPTH), SUN_RADIUS),
-		"The sun must end up inside the throat, not in front of it")
-	_expect(is_equal_approx(LeviathanScript.distance_at(600.0), ending), "The dive must stop once it is over")
+	for feed: float in [MIRAGE_DISTANCE, TERRA_DISTANCE, CYCLOPS_DISTANCE]:
+		_expect(is_equal_approx(LeviathanScript.distance_at(0.0, feed), LeviathanScript.START_DISTANCE), "Must hold station while fading in")
+		_expect(is_equal_approx(LeviathanScript.distance_at(LeviathanScript.FADE_IN_DURATION, feed), LeviathanScript.START_DISTANCE), "Must not move before the fade completes")
+		var end_time := LeviathanScript.FADE_IN_DURATION + LeviathanScript.dive_duration(feed)
+		var previous := LeviathanScript.START_DISTANCE
+		var second := LeviathanScript.FADE_IN_DURATION + 1.0
+		while second < end_time:
+			var distance := LeviathanScript.distance_at(second, feed)
+			_expect(distance < previous, "Approach must close in at %.0f s for a player %.0f from the sun" % [second, feed])
+			previous = distance
+			second += 1.0
+		# The maw front carries on past the sun, or the sun sits in the teeth with
+		# the throat that eats it still a throat's depth short of it.
+		var ending := LeviathanScript.distance_at(end_time, feed)
+		_expect(ending < -SUN_RADIUS, "The dive must carry the sun past the fangs, ended at %.0f" % ending)
+		# Pivot z of a body the maw front has passed is how far the front is past it,
+		# and the throat box is measured from its own centre a throat's depth back.
+		_expect(LeviathanScript.in_throat(Vector3(0.0, 0.0, -ending - LeviathanScript.THROAT_DEPTH), SUN_RADIUS),
+			"The sun must end up inside the throat, not in front of it")
+		_expect(is_equal_approx(LeviathanScript.distance_at(end_time + 600.0, feed), ending), "The dive must stop once it is over")
+
+
+# It comes from the back of the universe fast, then slows down well before the
+# player so they watch the maw close on them.
+func _test_fast_then_slow() -> void:
+	for feed: float in [MIRAGE_DISTANCE, TERRA_DISTANCE, CYCLOPS_DISTANCE]:
+		var rush_start := LeviathanScript.FADE_IN_DURATION
+		var early_speed := (LeviathanScript.distance_at(rush_start, feed) - LeviathanScript.distance_at(rush_start + 3.0, feed)) / 3.0
+		_expect(early_speed > LeviathanScript.FEED_SPEED * 5.0, "The rush must be fast far out, %.0f m/s for a player %.0f out" % [early_speed, feed])
+		var step := 0.05
+		var elapsed := rush_start
+		var slow_since := -1.0
+		while elapsed < rush_start + LeviathanScript.dive_duration(feed):
+			var distance := LeviathanScript.distance_at(elapsed, feed)
+			var speed := (LeviathanScript.distance_at(elapsed - step, feed) - distance) / step
+			if slow_since < 0.0 and speed <= LeviathanScript.FEED_SPEED * 1.01:
+				slow_since = elapsed
+			# The player sits on the dive line `feed` from the sun.
+			if LeviathanScript.in_throat(Vector3(0.0, 0.0, -(distance - feed) - LeviathanScript.THROAT_DEPTH), 0.0):
+				_expect(speed <= LeviathanScript.FEED_SPEED * 1.01, "The maw must be slow when it takes the player, %.0f m/s" % speed)
+				_expect(slow_since >= 0.0 and elapsed - slow_since >= 10.0,
+					"The player must watch the slow approach for at least 10 s, got %.1f s" % (elapsed - slow_since))
+				break
+			elapsed += step
 
 
 func _test_maw() -> void:
-	_expect(is_equal_approx(LeviathanScript.maw_open_at(0.0), 0.0), "The maw must stay shut during the fade")
-	_expect(is_equal_approx(LeviathanScript.maw_open_at(LeviathanScript.FADE_IN_DURATION), 0.0), "The maw must stay shut until the approach starts")
-	var devour_time := _time_at_distance(LeviathanScript.DEVOUR_START_DISTANCE)
-	_expect(LeviathanScript.maw_open_at(devour_time) > 0.5, "The maw must be open before the first bite")
-	_expect(is_equal_approx(LeviathanScript.maw_open_at(LeviathanScript.FADE_IN_DURATION + LeviathanScript.TRAVEL_DURATION), 1.0), "The maw must be wide open at the sun")
+	_expect(is_equal_approx(LeviathanScript.maw_open_at(LeviathanScript.START_DISTANCE), 0.0), "The maw must stay shut during the fade")
+	_expect(LeviathanScript.maw_open_at(LeviathanScript.DEVOUR_START_DISTANCE) > 0.5, "The maw must be open before the first bite")
+	_expect(is_equal_approx(LeviathanScript.maw_open_at(LeviathanScript.END_DISTANCE), 1.0), "The maw must be wide open at the sun")
 	# The jaw only ever opens. Shutting it again mid dive was the mouth chewing
 	# on empty space with the whole system still out in front of it.
-	var previous := LeviathanScript.maw_open_at(LeviathanScript.FADE_IN_DURATION)
+	var previous := LeviathanScript.maw_open_at(LeviathanScript.START_DISTANCE)
 	for step in range(1, 301):
-		var open := LeviathanScript.maw_open_at(
-			LeviathanScript.FADE_IN_DURATION + LeviathanScript.TRAVEL_DURATION * float(step) / 300.0)
+		var distance := lerpf(LeviathanScript.START_DISTANCE, LeviathanScript.END_DISTANCE, float(step) / 300.0)
+		var open := LeviathanScript.maw_open_at(distance)
 		_expect(open >= previous - 0.0001, "The jaw must never shut again once it starts opening, saw %.3f after %.3f" % [open, previous])
 		previous = open
-	# Half the dive is crossed with the mouth still shut, or it opens while the
-	# creature is still a silhouette at the back of the galaxy.
-	_expect(LeviathanScript.maw_open_at(
-		LeviathanScript.FADE_IN_DURATION + LeviathanScript.TRAVEL_DURATION * 0.2) < 0.05,
-		"The maw must still be shut a fifth of the way in")
+	# The empty back of the galaxy is crossed with the mouth still shut, or it opens
+	# while the creature is still a silhouette.
+	_expect(LeviathanScript.maw_open_at(LeviathanScript.START_DISTANCE * 0.65) < 0.05,
+		"The maw must still be shut a third of the way in")
+	# Whoever is eaten first, the gape must already be wide.
+	_expect(LeviathanScript.maw_open_at(CYCLOPS_DISTANCE - LeviathanScript.THROAT_DEPTH + LeviathanScript.STORM_HALF_EXTENTS.z) > 0.99,
+		"The maw must be wide open before it reaches a player at Cyclops")
 
 
 # Nothing dies at arm's length: the body has to be inside the throat box, and
@@ -216,9 +244,10 @@ func _test_blackout_keeps_leviathan_visible() -> void:
 	var original_roar: Node = leviathan._roar
 	leviathan._roar = SilentRoar.new()
 	original_roar.free()
-	leviathan._elapsed = LeviathanScript.FADE_IN_DURATION + LeviathanScript.TRAVEL_DURATION * 0.6
+	leviathan._feed_distance = TERRA_DISTANCE
+	leviathan._elapsed = LeviathanScript.FADE_IN_DURATION + LeviathanScript.dive_duration(TERRA_DISTANCE) * 0.6
 	leviathan._direction = Vector3.FORWARD
-	var initial_distance := LeviathanScript.distance_at(leviathan._elapsed)
+	var initial_distance := LeviathanScript.distance_at(leviathan._elapsed, TERRA_DISTANCE)
 	var initial_position := sun.global_position + leviathan._direction * initial_distance
 	leviathan._place_body(initial_position, initial_position - leviathan._direction * LeviathanScript.BODY_LENGTH, Vector3.UP)
 	leviathan._visual.visible = true
@@ -227,7 +256,7 @@ func _test_blackout_keeps_leviathan_visible() -> void:
 	leviathan._update_blackout(LeviathanScript.BLACKOUT_DURATION * 0.5)
 	_expect(leviathan._visual.visible, "The leviathan must stay visible during the blackout")
 	_expect(leviathan._storm.visible, "The maw storm must stay visible during the blackout")
-	_expect(leviathan._elapsed > LeviathanScript.FADE_IN_DURATION + LeviathanScript.TRAVEL_DURATION * 0.6,
+	_expect(leviathan._elapsed > LeviathanScript.FADE_IN_DURATION + LeviathanScript.dive_duration(TERRA_DISTANCE) * 0.6,
 		"The leviathan must keep advancing during the blackout")
 	_expect(not leviathan.global_position.is_equal_approx(initial_position),
 		"The leviathan position must keep changing during the blackout")
@@ -235,15 +264,6 @@ func _test_blackout_keeps_leviathan_visible() -> void:
 	sun.free()
 	leviathan._roar.free()
 	leviathan.free()
-
-
-func _time_at_distance(distance: float) -> float:
-	var elapsed := LeviathanScript.FADE_IN_DURATION
-	while elapsed < LeviathanScript.FADE_IN_DURATION + LeviathanScript.TRAVEL_DURATION:
-		if LeviathanScript.distance_at(elapsed) <= distance:
-			return elapsed
-		elapsed += 0.05
-	return elapsed
 
 
 func _expect(condition: bool, message: String) -> void:

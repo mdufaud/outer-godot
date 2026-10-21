@@ -50,7 +50,13 @@ const THROAT_DEPTH := (MODEL_MAW_Z - MODEL_STORM_CENTRE.z) * MODEL_SCALE
 const START_DISTANCE := 42000.0
 const DEVOUR_START_DISTANCE := 12000.0
 const FADE_IN_DURATION := 9.0
-const TRAVEL_DURATION := 30.0
+# The rush covers the empty back of the galaxy with a speed proportional to the
+# distance left; once that drops to FEED_SPEED the creature creeps the rest of
+# the way, FEED_LEAD before the player, so they watch the maw close in.
+const RUSH_RATE := 0.22
+const FEED_SPEED := 420.0
+const FEED_LEAD := 4000.0
+const END_DISTANCE := -THROAT_DEPTH
 const BLACKOUT_DURATION := 2.5
 const DRAW_DISTANCE := 60000.0
 const ROAR_INTERVAL := 7.5
@@ -59,11 +65,12 @@ const ROAR_INTERVAL := 7.5
 const APPROACH_DIRECTION := Vector3(0.42, 0.28, -0.86)
 # The jaw stays shut for the first stretch of the dive and opens once, on the way
 # into the system. It never shuts again: the gape is what the system falls into.
-const MAW_OPEN_START := 0.25
-const MAW_OPEN_END := 0.5
+const MAW_OPEN_START_DISTANCE := 24000.0
+const MAW_OPEN_END_DISTANCE := 12500.0
 
 var _state := STATE_DORMANT
 var _elapsed := 0.0
+var _feed_distance := 0.0
 var _blackout_elapsed := 0.0
 var _roar_timer := 0.0
 var _body_material := ShaderMaterial.new()
@@ -201,6 +208,7 @@ func summon() -> void:
 	var sun := get_tree().get_first_node_in_group("sun") as Sun
 	if camera != null and sun != null:
 		_direction = spawn_direction(camera.global_position, sun.global_position)
+		_feed_distance = camera.global_position.distance_to(sun.global_position)
 	if camera != null:
 		# Frozen at the summon. Reading the live camera every frame rolled the
 		# whole creature with the player's aim, which read as the body being
@@ -233,7 +241,7 @@ func is_active() -> bool:
 
 
 func is_devouring() -> bool:
-	return _state != STATE_DORMANT and distance_at(_elapsed) <= DEVOUR_START_DISTANCE
+	return _state != STATE_DORMANT and distance_at(_elapsed, _feed_distance) <= DEVOUR_START_DISTANCE
 
 
 func get_dread_factor() -> float:
@@ -244,25 +252,40 @@ static func presence_at(elapsed: float) -> float:
 	return clampf(elapsed / FADE_IN_DURATION, 0.0, 1.0)
 
 
-# Holds station at the back of the galaxy while it fades in, then falls inwards
-# with an accelerating curve so the last stretch is the fastest. Measured to the
-# maw front, which ends up a throat's depth past the sun: the run is over when
-# the sun is swallowed, not when it touches the fangs.
-static func distance_at(elapsed: float) -> float:
-	if elapsed <= FADE_IN_DURATION:
+# Holds station at the back of the galaxy while it fades in, rushes in, then
+# creeps from FEED_LEAD before `feed_distance` (the player's distance from the
+# sun at the summon) down to END_DISTANCE. Measured to the maw front, which
+# ends a throat's depth past the sun so the sun goes down the throat.
+static func distance_at(elapsed: float, feed_distance: float) -> float:
+	var time := elapsed - FADE_IN_DURATION
+	if time <= 0.0:
 		return START_DISTANCE
-	var travel := clampf((elapsed - FADE_IN_DURATION) / TRAVEL_DURATION, 0.0, 1.0)
-	return START_DISTANCE * pow(1.0 - travel, 2.0) - THROAT_DEPTH * travel
+	var rush_target := minf(feed_distance + FEED_LEAD, START_DISTANCE)
+	var rush_time := _rush_time(feed_distance)
+	if time < rush_time:
+		return rush_target + (START_DISTANCE - rush_target) * exp(-RUSH_RATE * time)
+	var creep_start := minf(rush_target + FEED_SPEED / RUSH_RATE, START_DISTANCE)
+	return maxf(creep_start - FEED_SPEED * (time - rush_time), END_DISTANCE)
 
 
-static func maw_open_at(elapsed: float) -> float:
-	if elapsed <= FADE_IN_DURATION:
-		return 0.0
-	var travel := clampf((elapsed - FADE_IN_DURATION) / TRAVEL_DURATION, 0.0, 1.0)
-	# It crosses half the way in with the mouth shut, then tears it open once and
-	# holds it open. Anything that shuts the jaw again mid dive reads as the body
-	# chewing on empty space long before there is anything in front of it.
-	return smoothstep(MAW_OPEN_START, MAW_OPEN_END, travel)
+static func dive_duration(feed_distance: float) -> float:
+	var rush_target := minf(feed_distance + FEED_LEAD, START_DISTANCE)
+	var creep_start := minf(rush_target + FEED_SPEED / RUSH_RATE, START_DISTANCE)
+	return _rush_time(feed_distance) + (creep_start - END_DISTANCE) / FEED_SPEED
+
+
+# The exponential rush slows to FEED_SPEED here, so the creep takes over without a jolt.
+static func _rush_time(feed_distance: float) -> float:
+	var rush_target := minf(feed_distance + FEED_LEAD, START_DISTANCE)
+	var initial_speed := RUSH_RATE * (START_DISTANCE - rush_target)
+	return log(initial_speed / FEED_SPEED) / RUSH_RATE if initial_speed > FEED_SPEED else 0.0
+
+
+# It crosses the empty stretch with the mouth shut, then tears it open once and
+# holds it open. Anything that shuts the jaw again mid dive reads as the body
+# chewing on empty space long before there is anything in front of it.
+static func maw_open_at(distance: float) -> float:
+	return 1.0 - smoothstep(MAW_OPEN_END_DISTANCE, MAW_OPEN_START_DISTANCE, distance)
 
 
 # Nothing is eaten by proximity: a body dies when it is actually inside the
@@ -290,8 +313,8 @@ func _process(delta: float) -> void:
 		return
 
 	var presence := presence_at(_elapsed)
-	var distance := distance_at(_elapsed)
-	var maw_open := maw_open_at(_elapsed)
+	var distance := distance_at(_elapsed, _feed_distance)
+	var maw_open := maw_open_at(distance)
 	_body_material.set_shader_parameter("presence", presence)
 	_update_rig(presence, maw_open)
 	_update_storm(delta, maw_open)
@@ -409,8 +432,8 @@ func _update_blackout(delta: float) -> void:
 		if camera != null:
 			_extend_camera_far(camera)
 		var presence := presence_at(_elapsed)
-		var distance := distance_at(_elapsed)
-		var maw_open := maw_open_at(_elapsed)
+		var distance := distance_at(_elapsed, _feed_distance)
+		var maw_open := maw_open_at(distance)
 		_body_material.set_shader_parameter("presence", presence)
 		_update_rig(presence, maw_open)
 		_update_storm(delta, maw_open)
