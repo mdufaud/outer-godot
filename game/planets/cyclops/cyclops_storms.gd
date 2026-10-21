@@ -219,7 +219,7 @@ func _build_storm_interior() -> void:
 			skeleton.set_bone_rest(bone_index, Transform3D(Basis.IDENTITY, Vector3(0.0, bone_height, 0.0)))
 		funnel_root.add_child(skeleton)
 		var funnel_mesh := _build_tornado_mesh(funnel_height, base_radius, trunk_radius, crown_radius, base_phase, shape_kind, shape_seed, randomize_shape)
-		var skirt_mesh := _build_storm_skirt_mesh(funnel_height, base_radius, base_phase, shape_kind, shape_seed, randomize_shape)
+		var skirt_mesh := _build_storm_skirt_mesh(funnel_height, base_radius, trunk_radius, crown_radius, base_phase, shape_kind, shape_seed, randomize_shape)
 		var skin := skeleton.create_skin_from_rest_transforms()
 		for layer in 3:
 			var funnel := MeshInstance3D.new()
@@ -301,16 +301,7 @@ func _build_tornado_mesh(funnel_height: float, base_radius: float, trunk_radius:
 	var indices := PackedInt32Array()
 	for ring in HEIGHT_SEGMENTS + 1:
 		var height_fraction := float(ring) / float(HEIGHT_SEGMENTS)
-		var body_blend := smoothstep(0.0, 0.56, height_fraction)
-		var crown_blend := smoothstep(0.67, 0.94, height_fraction)
-		if shape_kind == 1:
-			body_blend = smoothstep(0.28, 0.82, height_fraction)
-			crown_blend = smoothstep(0.78, 0.97, height_fraction)
-		elif shape_kind == 0:
-			body_blend = smoothstep(0.0, 0.42, height_fraction)
-			crown_blend = smoothstep(0.72, 0.95, height_fraction)
-		var body_radius := lerpf(base_radius, trunk_radius, body_blend)
-		var profile_radius := lerpf(body_radius, crown_radius, crown_blend)
+		var crown_blend := _tornado_profile_blends(height_fraction, shape_kind).y
 		var centre := _tornado_centre_offset(height_fraction, funnel_height, phase, shape_kind, shape_seed, randomize_shape)
 		var lower_weight := clampf(1.0 - height_fraction * 2.0, 0.0, 1.0)
 		var middle_weight := 1.0 - absf(height_fraction - 0.5) * 2.0
@@ -322,14 +313,7 @@ func _build_tornado_mesh(funnel_height: float, base_radius: float, trunk_radius:
 		for segment in RADIAL_SEGMENTS + 1:
 			var radial_fraction := float(segment) / float(RADIAL_SEGMENTS)
 			var angle := radial_fraction * TAU
-			var broad_lobe := sin(angle * 2.0 + height_fraction * 8.0 + phase) * lerpf(0.025, 0.11, crown_blend)
-			var fine_lobe := sin(angle * 7.0 - height_fraction * 19.0 + phase * 2.3) * 0.045
-			var vertical_bulge := 0.0
-			if randomize_shape:
-				broad_lobe = sin(angle * lerpf(1.5, 3.5, _tornado_shape_random(shape_seed, 4.0)) + height_fraction * lerpf(5.0, 12.0, _tornado_shape_random(shape_seed, 5.0)) + phase) * lerpf(0.035, 0.16, crown_blend)
-				fine_lobe = sin(angle * lerpf(5.0, 10.0, _tornado_shape_random(shape_seed, 6.0)) - height_fraction * lerpf(14.0, 27.0, _tornado_shape_random(shape_seed, 7.0)) + phase * 2.3) * lerpf(0.025, 0.075, _tornado_shape_random(shape_seed, 8.0))
-				vertical_bulge = sin(height_fraction * lerpf(2.0, 4.5, _tornado_shape_random(shape_seed, 9.0)) * PI + shape_seed) * lerpf(0.03, 0.11, _tornado_shape_random(shape_seed, 10.0))
-			var ring_radius := profile_radius * (1.0 + broad_lobe + fine_lobe + vertical_bulge)
+			var ring_radius := _tornado_ring_radius(height_fraction, angle, base_radius, trunk_radius, crown_radius, phase, shape_kind, shape_seed, randomize_shape)
 			var radial := Vector3(cos(angle), 0.0, sin(angle))
 			vertices.append(Vector3(centre.x, (height_fraction - 0.5) * funnel_height, centre.y) + radial * ring_radius)
 			normals.append(radial)
@@ -354,6 +338,30 @@ func _build_tornado_mesh(funnel_height: float, base_radius: float, trunk_radius:
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	return mesh
+
+
+func _tornado_profile_blends(height_fraction: float, shape_kind: int) -> Vector2:
+	match shape_kind:
+		0:
+			return Vector2(smoothstep(0.0, 0.42, height_fraction), smoothstep(0.72, 0.95, height_fraction))
+		1:
+			return Vector2(smoothstep(0.28, 0.82, height_fraction), smoothstep(0.78, 0.97, height_fraction))
+	return Vector2(smoothstep(0.0, 0.56, height_fraction), smoothstep(0.67, 0.94, height_fraction))
+
+
+# Funnel radius around its centre line, lobes included: the skirt reuses it so both meshes share a silhouette.
+func _tornado_ring_radius(height_fraction: float, angle: float, base_radius: float, trunk_radius: float, crown_radius: float, phase: float, shape_kind: int, shape_seed: float, randomize_shape: bool) -> float:
+	var blends := _tornado_profile_blends(height_fraction, shape_kind)
+	var body_radius := lerpf(base_radius, trunk_radius, blends.x)
+	var profile_radius := lerpf(body_radius, crown_radius, blends.y)
+	var broad_lobe := sin(angle * 2.0 + height_fraction * 8.0 + phase) * lerpf(0.025, 0.11, blends.y)
+	var fine_lobe := sin(angle * 7.0 - height_fraction * 19.0 + phase * 2.3) * 0.045
+	var vertical_bulge := 0.0
+	if randomize_shape:
+		broad_lobe = sin(angle * lerpf(1.5, 3.5, _tornado_shape_random(shape_seed, 4.0)) + height_fraction * lerpf(5.0, 12.0, _tornado_shape_random(shape_seed, 5.0)) + phase) * lerpf(0.035, 0.16, blends.y)
+		fine_lobe = sin(angle * lerpf(5.0, 10.0, _tornado_shape_random(shape_seed, 6.0)) - height_fraction * lerpf(14.0, 27.0, _tornado_shape_random(shape_seed, 7.0)) + phase * 2.3) * lerpf(0.025, 0.075, _tornado_shape_random(shape_seed, 8.0))
+		vertical_bulge = sin(height_fraction * lerpf(2.0, 4.5, _tornado_shape_random(shape_seed, 9.0)) * PI + shape_seed) * lerpf(0.03, 0.11, _tornado_shape_random(shape_seed, 10.0))
+	return profile_radius * (1.0 + broad_lobe + fine_lobe + vertical_bulge)
 
 
 func _tornado_shape_random(shape_seed: float, channel: float) -> float:
@@ -385,11 +393,11 @@ func _tornado_centre_offset(height_fraction: float, funnel_height: float, phase:
 
 # Flared foot for the funnel: same shader, same UV.y scale and same lateral drift,
 # so it reads as the funnel surface widening into the sea rather than a second effect.
-func _build_storm_skirt_mesh(funnel_height: float, base_radius: float, phase: float, shape_kind: int, shape_seed: float, randomize_shape: bool) -> ArrayMesh:
+func _build_storm_skirt_mesh(funnel_height: float, base_radius: float, trunk_radius: float, crown_radius: float, phase: float, shape_kind: int, shape_seed: float, randomize_shape: bool) -> ArrayMesh:
 	const RADIAL_SEGMENTS := 64
 	const HEIGHT_SEGMENTS := 14
+	const FLARE_SCALE := 2.2
 	var skirt_height := funnel_height * 0.3
-	var flare_radius := base_radius * 2.2
 	var base_centre := _tornado_centre_offset(0.0, funnel_height, phase, shape_kind, shape_seed, randomize_shape)
 	var vertices := PackedVector3Array()
 	var normals := PackedVector3Array()
@@ -399,14 +407,12 @@ func _build_storm_skirt_mesh(funnel_height: float, base_radius: float, phase: fl
 	for ring in HEIGHT_SEGMENTS + 1:
 		var ring_fraction := float(ring) / float(HEIGHT_SEGMENTS)
 		var height_fraction := ring_fraction * skirt_height / funnel_height
-		var profile_radius := lerpf(base_radius * 1.02, flare_radius, pow(1.0 - ring_fraction, 2.8))
+		var flare := lerpf(1.0, FLARE_SCALE, pow(1.0 - ring_fraction, 2.8))
 		var centre := _tornado_centre_offset(height_fraction, funnel_height, phase, shape_kind, shape_seed, randomize_shape) - base_centre
 		for segment in RADIAL_SEGMENTS + 1:
 			var radial_fraction := float(segment) / float(RADIAL_SEGMENTS)
 			var angle := radial_fraction * TAU
-			var broad_lobe := sin(angle * 2.0 + height_fraction * 8.0 + phase) * 0.025
-			var fine_lobe := sin(angle * 7.0 - height_fraction * 19.0 + phase * 2.3) * 0.045
-			var ring_radius := profile_radius * (1.0 + broad_lobe + fine_lobe)
+			var ring_radius := _tornado_ring_radius(height_fraction, angle, base_radius, trunk_radius, crown_radius, phase, shape_kind, shape_seed, randomize_shape) * flare
 			var radial := Vector3(cos(angle), 0.0, sin(angle))
 			vertices.append(Vector3(centre.x, ring_fraction * skirt_height, centre.y) + radial * ring_radius)
 			normals.append(radial)
