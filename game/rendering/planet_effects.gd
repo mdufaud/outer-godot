@@ -10,9 +10,6 @@ extends CompositorEffect
 # chains SubViewports. This does the same with one compute pass per effect,
 # ping-ponging between the color layer and a scratch texture.
 
-const OceanShaderPath := "res://game/rendering/shaders/ocean_effect.glsl"
-const AtmosphereShaderPath := "res://game/rendering/shaders/atmosphere_effect.glsl"
-const BlitShaderPath := "res://game/rendering/shaders/blit_effect.glsl"
 const OceanShader := preload("res://game/rendering/shaders/ocean_effect.glsl")
 const AtmosphereShader := preload("res://game/rendering/shaders/atmosphere_effect.glsl")
 const BlitShader := preload("res://game/rendering/shaders/blit_effect.glsl")

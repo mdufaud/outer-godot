@@ -3,8 +3,6 @@ extends CanvasLayer
 
 const BonificationMathScript := preload("res://game/shared/bonification_math.gd")
 const HudGlobeScript := preload("res://game/hud/hud_globe.gd")
-const GravityServiceScript := preload("res://game/celestial/gravity.gd")
-const TouchServiceScript := preload("res://game/input/touch.gd")
 
 class NavigationOverlay extends Control:
 	var hud: CanvasLayer

@@ -51,13 +51,6 @@ func get_environment_force(world_position: Vector3) -> Vector3:
 	return _get_storm_push(world_position)
 
 
-func _surface_basis(direction: Vector3, roll: float) -> Basis:
-	var reference := Vector3.UP if absf(direction.y) < 0.92 else Vector3.FORWARD
-	var tangent := reference.cross(direction).normalized()
-	var bitangent := tangent.cross(direction).normalized()
-	return Basis(tangent, direction, bitangent).rotated(direction, roll)
-
-
 func _build_storm_system() -> void:
 	if not body.weather_enabled or body.config.weather.cloud_shader == null:
 		return

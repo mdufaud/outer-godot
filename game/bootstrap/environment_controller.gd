@@ -3,12 +3,7 @@ extends Node
 
 const PlanetEffectsScript := preload("res://game/rendering/planet_effects.gd")
 
-var main: Node3D
 var _planet_effects: PlanetEffects
-
-
-func setup(next_main: Node3D) -> void:
-	main = next_main
 
 
 func attach_to(world_environment: WorldEnvironment) -> void:

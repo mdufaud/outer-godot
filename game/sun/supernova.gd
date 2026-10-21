@@ -73,10 +73,6 @@ func is_active() -> bool:
 	return _elapsed >= 0.0
 
 
-func wave_radius() -> float:
-	return wave_radius_at(_elapsed, _sun_radius)
-
-
 static func wave_radius_at(elapsed: float, sun_radius: float) -> float:
 	if elapsed < COLLAPSE_DURATION:
 		return sun_radius

@@ -45,7 +45,4 @@ static func create_config() -> PlanetConfig:
 
 	config.surface.style = &"terrain"
 	config.surface.material_profile = PlanetShapeProfileScript.EARTH
-	config.surface.shore_color = Color(0.66, 0.58, 0.36)
-	config.surface.land_low_color = Color(0.13, 0.34, 0.12)
-	config.surface.land_high_color = Color(0.35, 0.24, 0.12)
 	return config

@@ -74,10 +74,6 @@ func get_altitude(pos: Vector3) -> float:
 	return direction.length() - source.get_surface_radius_towards(direction.normalized())
 
 
-func get_relative_gravity(pos: Vector3, reference: Node3D) -> Vector3:
-	return get_gravity(pos) - get_gravity_at_body(reference)
-
-
 # Every walker and every ship needs the pull at the centre of its reference body,
 # and that is one full sweep of `sources` each. Same value for all of them within
 # a physics frame, so compute it once.

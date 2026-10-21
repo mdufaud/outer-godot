@@ -1,7 +1,6 @@
 class_name TouchHud
 extends Control
 
-const TouchServiceScript := preload("res://game/input/touch.gd")
 var main: Main
 
 const BW := 78.0

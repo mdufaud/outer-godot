@@ -1,9 +1,6 @@
 class_name Player
 extends CharacterBody3D
 
-const PlanetBodyScript := preload("res://game/planets/shared/planet_body.gd")
-const GravityServiceScript := preload("res://game/celestial/gravity.gd")
-const TouchServiceScript := preload("res://game/input/touch.gd")
 
 const WALK_SPEED := 2.75
 const SPRINT_MULT := 1.5

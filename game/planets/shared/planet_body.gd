@@ -1,7 +1,6 @@
 class_name PlanetBody
 extends CelestialBody
 
-const PlanetConfigScript := preload("res://game/planets/shared/planet_config.gd")
 const PlanetDefaultsScript := preload("res://game/planets/shared/planet_defaults.gd")
 const PlanetShapeProfileScript := preload("res://game/planets/shared/planet_shape_profile.gd")
 const PlanetQualityScript := preload("res://game/planets/shared/planet_quality.gd")
@@ -9,16 +8,11 @@ const PlanetHeightGeneratorScript := preload("res://game/planets/shared/planet_g
 const PlanetTopologyScript := preload("res://game/planets/shared/planet_topology.gd")
 const PlanetCacheScript := preload("res://game/planets/shared/planet_cache.gd")
 const AtmosphereLutScript := preload("res://game/planets/shared/atmosphere_lut.gd")
-const GravityServiceScript := preload("res://game/celestial/gravity.gd")
 const EarthNoiseTexture := preload("res://assets/shared/planet_textures/earth_noise.png")
 const MoonNoiseTexture := preload("res://assets/shared/planet_textures/moon_noise.png")
 const CraterEjectaTexture := preload("res://assets/shared/planet_textures/crater_ejecta_ray.png")
 const MoonFlatNormalTexture := preload("res://assets/shared/planet_textures/moon_normal_flat.png")
 const MoonSteepNormalTexture := preload("res://assets/shared/planet_textures/moon_normal_steep.png")
-const OceanWaveATexture := preload("res://assets/shared/ocean_textures/wave_a.png")
-const OceanWaveBTexture := preload("res://assets/shared/ocean_textures/wave_b.png")
-const OceanFoamTexture := preload("res://assets/shared/ocean_textures/water_foam.png")
-const BlueNoiseTexture := preload("res://assets/shared/planet_textures/blue_noise.png")
 const LavaShader := preload("res://game/planets/shared/shaders/lava.gdshader")
 const IceShader := preload("res://game/planets/shared/shaders/ice.gdshader")
 const ProceduralPlanetShader := preload("res://game/planets/shared/shaders/procedural_planet.gdshader")
@@ -64,10 +58,6 @@ var atmosphere_intensity := 0.0
 var material_profile := PlanetShapeProfileScript.EARTH
 var weather_enabled := false
 var weather_contact_count := 0
-var shore_color := Color(0.66, 0.58, 0.36)
-var land_low_color := Color(0.13, 0.34, 0.12)
-var land_high_color := Color(0.35, 0.24, 0.12)
-
 
 var _terrain: MeshInstance3D
 var _lod_meshes: Array[ArrayMesh] = []
@@ -115,9 +105,6 @@ func _apply_config(next_config: PlanetConfig) -> void:
 	quality_profile = config.quality_profile
 	surface_style = config.surface.style
 	material_profile = config.surface.material_profile
-	shore_color = config.surface.shore_color
-	land_low_color = config.surface.land_low_color
-	land_high_color = config.surface.land_high_color
 	has_ocean = config.ocean.enabled
 	ocean_level = config.ocean.level
 	ocean_shallow_color = config.ocean.shallow_color
@@ -411,20 +398,6 @@ func get_sunlit_spawn_direction(sun_position: Vector3) -> Vector3:
 		best_score = score
 		best_direction = direction
 	return best_direction
-
-
-func get_land_direction() -> Vector3:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = rng_seed * 7919 + 17
-	for _attempt in 256:
-		var direction := Vector3(
-			rng.randf_range(-1.0, 1.0),
-			rng.randf_range(0.05, 1.0),
-			rng.randf_range(-1.0, 1.0)
-		).normalized()
-		if not has_ocean or _height_for(direction) > _ocean_level_above_core() + 0.7:
-			return direction
-	return Vector3.UP
 
 
 func get_nearby_land_direction(origin: Vector3) -> Vector3:

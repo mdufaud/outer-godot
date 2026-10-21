@@ -36,9 +36,6 @@ class AtmosphereConfig extends RefCounted:
 class SurfaceConfig extends RefCounted:
 	var style: StringName = &"terrain"
 	var material_profile := 0
-	var shore_color := Color(0.66, 0.58, 0.36)
-	var land_low_color := Color(0.13, 0.34, 0.12)
-	var land_high_color := Color(0.35, 0.24, 0.12)
 
 
 class WeatherConfig extends RefCounted:

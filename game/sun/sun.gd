@@ -2,7 +2,6 @@ class_name Sun
 extends CelestialBody
 
 const SunFXScript := preload("res://game/sun/sun_fx.gd")
-const GravityServiceScript := preload("res://game/celestial/gravity.gd")
 const SupernovaScript := preload("res://game/sun/supernova.gd")
 const SunShader := preload("res://game/sun/shaders/sun.gdshader")
 const CoronaShader := preload("res://game/sun/shaders/corona.gdshader")

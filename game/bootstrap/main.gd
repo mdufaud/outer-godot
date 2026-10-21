@@ -14,12 +14,8 @@ const EnvironmentTransitionShader := preload("res://game/rendering/shaders/envir
 const StarsShader := preload("res://game/rendering/shaders/stars.gdshader")
 const OceanWavesAudio := preload("res://assets/audio/ocean_waves.wav")
 const WindAudio := preload("res://assets/audio/wind.wav")
-const BonificationMathScript := preload("res://game/shared/bonification_math.gd")
 const SolarSystemManifestScript := preload("res://game/celestial/solar_system_manifest.gd")
 const CelestialSystemScript := preload("res://game/celestial/celestial_system.gd")
-const GravityServiceScript := preload("res://game/celestial/gravity.gd")
-const TouchServiceScript := preload("res://game/input/touch.gd")
-const PlanetBodyScript := preload("res://game/planets/shared/planet_body.gd")
 const FloatingOriginScript := preload("res://game/celestial/floating_origin.gd")
 const SunFXScript := preload("res://game/sun/sun_fx.gd")
 const LeviathanScript := preload("res://game/leviathan/leviathan.gd")
@@ -34,7 +30,6 @@ const BOOT_TIMEOUT_MS := 180000
 var player: Player
 var ship: Ship
 var earth: PlanetBody
-var moon: PlanetBody
 var sun: Sun
 var sun_light: DirectionalLight3D
 var fill_light: DirectionalLight3D
@@ -73,7 +68,6 @@ func _ready() -> void:
 	_spawn_controller.setup(self)
 	add_child(_spawn_controller)
 	_environment_controller = EnvironmentControllerScript.new()
-	_environment_controller.setup(self)
 	add_child(_environment_controller)
 	_build_loading_screen()
 	_log_boot("Loading screen ready; renderer=%s" % RenderingServer.get_current_rendering_method())
@@ -104,7 +98,6 @@ func _boot() -> void:
 		await get_tree().process_frame
 	_bodies_by_id = spawned_bodies
 	earth = spawned_bodies[&"Terra"] as PlanetBody
-	moon = spawned_bodies[&"Luna"] as PlanetBody
 	_log_boot("Waiting for %d bodies" % spawned_bodies.size())
 	if not await _wait_for_bodies(spawned_body_list):
 		return
@@ -255,8 +248,8 @@ func _update_environment_feedback(delta: float, camera: Camera3D) -> void:
 	if source != null and source.has_atmosphere:
 		var atmosphere_radius := source.radius * (1.0 + source.atmosphere_scale)
 		var distance_to_center := camera.global_position.distance_to(source.global_position)
-		in_atmosphere = atmosphere_contains(camera.global_position, source.global_position, float(source.get("radius")), float(source.get("atmosphere_scale")))
-		wind_target = clampf((atmosphere_radius - distance_to_center) / maxf(atmosphere_radius - float(source.get("radius")), 0.001), 0.0, 1.0)
+		in_atmosphere = BonificationMath.atmosphere_contains(camera.global_position, source.global_position, source.radius, source.atmosphere_scale)
+		wind_target = clampf((atmosphere_radius - distance_to_center) / maxf(atmosphere_radius - source.radius, 0.001), 0.0, 1.0)
 		wind_target *= 1.0 - _underwater_strength
 	var dread := _leviathan.get_dread_factor() if _leviathan != null else 0.0
 	var ambience := 1.0 - dread
@@ -311,14 +304,6 @@ func trigger_camera_shake(strength: float, duration: float) -> void:
 	var camera := get_viewport().get_camera_3d()
 	if camera != null and _camera_shake != null:
 		_camera_shake.shake(camera, strength, duration)
-
-
-static func underwater_effect_target(depth: float) -> float:
-	return BonificationMathScript.underwater_effect_target(depth)
-
-
-static func atmosphere_contains(position_value: Vector3, center: Vector3, body_radius: float, atmosphere_scale: float) -> bool:
-	return BonificationMathScript.atmosphere_contains(position_value, center, body_radius, atmosphere_scale)
 
 
 func _update_lighting(camera: Camera3D) -> void:
@@ -521,8 +506,6 @@ func forget_body(body: Node3D) -> void:
 			_bodies_by_id.erase(body_id)
 	if earth == body:
 		earth = null
-	if moon == body:
-		moon = null
 
 
 func spawn_on_planet_id(body_name: StringName) -> bool:

@@ -1,8 +1,6 @@
 class_name Ship
 extends RigidBody3D
 
-const GravityServiceScript := preload("res://game/celestial/gravity.gd")
-const TouchServiceScript := preload("res://game/input/touch.gd")
 const SeatScript := preload("res://game/ship/seat.gd")
 const THRUST_ACCEL := 40.0
 const BRAKE_ACCEL := 45.0

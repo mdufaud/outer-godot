@@ -1,7 +1,6 @@
 class_name HudGlobe
 extends Control
 
-const GravityServiceScript := preload("res://game/celestial/gravity.gd")
 const GLOBE_RADIUS := 62.0
 const LAT_STEPS := [-60.0, -30.0, 0.0, 30.0, 60.0]
 const MERIDIAN_COUNT := 4

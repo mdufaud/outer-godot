@@ -1,7 +1,6 @@
 class_name CelestialSystem
 extends Node
 
-const CelestialEntryScript := preload("res://game/celestial/celestial_entry.gd")
 
 const FAST_FORWARD_MULTIPLIER := 60.0
 const MAX_SUBSTEP := 1.0 / 120.0
@@ -273,20 +272,3 @@ static func _circular_velocity(offset: Vector3, parent_mu: float) -> Vector3:
 		return Vector3.ZERO
 	return Vector3.UP.cross(offset).normalized() * sqrt(parent_mu / distance)
 
-
-func total_energy() -> float:
-	if _positions.is_empty() or _sim_ids.is_empty():
-		return 0.0
-	var energy := 0.0
-	for index in _sim_ids.size():
-		var velocity := read_state(_velocities, index)
-		var mass_mu := 1.0
-		if index < _pair_mu.size():
-			for value in _pair_mu[index]:
-				mass_mu = maxf(mass_mu, value)
-		energy += 0.5 * mass_mu * velocity.length_squared()
-		for other in range(index + 1, _sim_ids.size()):
-			var distance := read_state(_positions, index).distance_to(read_state(_positions, other))
-			if distance > MIN_SEPARATION:
-				energy -= mass_mu * maxf(_pair_mu[other][index], 0.0) / distance
-	return energy

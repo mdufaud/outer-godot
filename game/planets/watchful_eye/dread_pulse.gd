@@ -30,10 +30,6 @@ func _ready() -> void:
 	add_child(_player)
 
 
-# 0 far away, 1 at the surface. Used to duck the rest of the ambience.
-func get_dread_factor() -> float:
-	return _proximity
-
 
 func _process(delta: float) -> void:
 	if target == null or not target.is_inside_tree():

@@ -6,7 +6,6 @@ extends Node3D
 # to keep the box glued to the body and aimed downwind.
 
 const TrailShader := preload("res://game/planets/watchful_eye/shaders/comet_trail.gdshader")
-const TouchServiceScript := preload("res://game/input/touch.gd")
 
 const LENGTH_SCALE := 22.0
 const TAIL_RADIUS_SCALE := 6.0
