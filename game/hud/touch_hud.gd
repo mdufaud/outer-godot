@@ -1,7 +1,13 @@
 class_name TouchHud
 extends Control
 
-var main: Main
+class TouchButton extends RefCounted:
+	var label: String
+	var action: StringName
+	var tap: Callable
+	var column: int
+	var row: int
+
 
 const BW := 78.0
 const BH := 78.0
@@ -10,20 +16,19 @@ const MARGIN := 22.0
 const HIT_PAD := 7.0
 const ICON_SIZE := 28.0
 const CAPTION_SIZE := 13.0
-const JOY_OFFSET := Vector2(130, -130)
-const JOY_RADIUS := 92.0
-const KNOB_RADIUS := 38.0
-const HOLD_ACTIONS := [
-	"move_forward", "move_back", "move_left", "move_right",
-	"jump", "sprint", "brake", "roll_left", "roll_right",
-]
+const MENU_SIZE := 52.0
+const STICK_AREA := Rect2(0.0, 0.35, 0.45, 0.65)
+const STICK_SIZE := 184.0
+const STICK_TIP := 76.0
+const ACCENT := Color(0.40, 0.78, 1.0)
+
+var main: Main
 
 var _piloting := false
-var _buttons: Array = []
-var _touches: Dictionary = {}
-var _joy_center := Vector2.ZERO
-var _joy_knob := Vector2.ZERO
-var _joy_active := false
+var _buttons: Array[TouchButton] = []
+var _button_touches: Dictionary[int, TouchButton] = {}
+var _look_touches: Dictionary[int, Vector2] = {}
+var _stick: VirtualJoystick
 var _scale := 1.0
 var _font: Font
 @onready var touch_service: TouchService = get_node("/root/Touch")
@@ -33,6 +38,16 @@ func _ready() -> void:
 	add_to_group("touch_hud")
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_font = ThemeDB.fallback_font
+	_stick = VirtualJoystick.new()
+	_stick.name = "MoveStick"
+	_stick.action_left = &"move_left"
+	_stick.action_right = &"move_right"
+	_stick.action_up = &"move_forward"
+	_stick.action_down = &"move_back"
+	_stick.joystick_mode = VirtualJoystick.JOYSTICK_DYNAMIC
+	_stick.visibility_mode = VirtualJoystick.VISIBILITY_ALWAYS
+	_stick.initial_offset_ratio = Vector2(0.4, 0.62)
+	add_child(_stick)
 	get_viewport().size_changed.connect(_fit)
 	_fit()
 	_rebuild()
@@ -42,77 +57,77 @@ func _fit() -> void:
 	position = Vector2.ZERO
 	size = get_viewport_rect().size
 	_scale = touch_service.ui_scale(size)
-	if not _joy_active:
-		_joy_center = _joy_home()
-	_notify_hud_layout()
+	_stick.position = STICK_AREA.position * size
+	_stick.size = STICK_AREA.size * size
+	_stick.joystick_size = STICK_SIZE * _scale
+	_stick.tip_size = STICK_TIP * _scale
+	_stick.add_theme_stylebox_override("normal_joystick", _circle(Color(0.08, 0.20, 0.34, 0.30), Color(ACCENT, 0.45)))
+	_stick.add_theme_stylebox_override("pressed_joystick", _circle(Color(0.08, 0.20, 0.34, 0.46), Color(ACCENT, 0.75)))
+	_stick.add_theme_stylebox_override("normal_tip", _circle(Color(ACCENT, 0.40), Color(0.78, 0.93, 1.0, 0.6)))
+	_stick.add_theme_stylebox_override("pressed_tip", _circle(Color(ACCENT, 0.65), Color(0.78, 0.93, 1.0, 0.9)))
 	queue_redraw()
 
 
+func _circle(fill: Color, border: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = fill
+	style.border_color = border
+	style.set_border_width_all(maxi(1, roundi(2.0 * _scale)))
+	style.set_corner_radius_all(roundi(STICK_SIZE * _scale))
+	style.anti_aliasing = true
+	return style
+
+
 func _process(_delta: float) -> void:
-	var p: bool = main.player.piloting
-	if p != _piloting:
-		_piloting = p
+	if main.player.piloting != _piloting:
+		_piloting = main.player.piloting
 		_rebuild()
-
-
-func _joy_home() -> Vector2:
-	return Vector2(JOY_OFFSET.x * _scale, size.y + JOY_OFFSET.y * _scale)
 
 
 func _rebuild() -> void:
 	_release_all_holds()
 	_buttons.clear()
 	if _piloting:
-		_add_btn("Up", "jump", Callable(), 0, 1)
-		_add_btn("Down", "sprint", Callable(), 0, 0)
-		_add_btn("Brake", "brake", Callable(), 1, 0)
-		_add_btn("Roll R", "roll_right", Callable(), 2, 0)
-		_add_btn("Roll L", "roll_left", Callable(), 2, 1)
-		_add_btn("Exit", "", _exit_ship, 1, 1)
-		_add_btn("R", "", _respawn, 0, 2)
-		_add_btn("Map", "", _toggle_map, 1, 2)
+		_add_button("Up", &"jump", Callable(), 0, 1)
+		_add_button("Down", &"sprint", Callable(), 0, 0)
+		_add_button("Brake", &"brake", Callable(), 1, 0)
+		_add_button("Roll R", &"roll_right", Callable(), 2, 0)
+		_add_button("Roll L", &"roll_left", Callable(), 2, 1)
+		_add_button("Exit", &"", _exit_ship, 1, 1)
+		_add_button("Map", &"", _toggle_map, 1, 2)
 	else:
-		_add_btn("Jump", "jump", Callable(), 0, 0)
-		_add_btn("Sprint", "sprint", Callable(), 0, 1)
-		_add_btn("E", "", _interact, 1, 0)
-		_add_btn("R", "", _respawn, 1, 1)
-		_add_btn("Map", "", _toggle_map, 1, 2)
-	_notify_hud_layout()
+		_add_button("Jump", &"jump", Callable(), 0, 0)
+		_add_button("Sprint", &"sprint", Callable(), 0, 1)
+		_add_button("Interact", &"", _interact, 1, 0)
+		_add_button("Respawn", &"", _respawn, 1, 1)
+		_add_button("Map", &"", _toggle_map, 1, 2)
 	queue_redraw()
 
 
-# The button block changes height between walk and pilot mode, so the panels above
-# it have to be re-fitted around the new free space.
-func _notify_hud_layout() -> void:
-	var hud := get_tree().get_first_node_in_group("hud") as Hud
-	if hud != null:
-		hud.layout_panels()
+func _add_button(label: String, action: StringName, tap: Callable, column: int, row: int) -> void:
+	var button := TouchButton.new()
+	button.label = label
+	button.action = action
+	button.tap = tap
+	button.column = column
+	button.row = row
+	_buttons.append(button)
 
 
-func _add_btn(label: String, action: String, tap: Callable, col: int, row: int) -> void:
-	_buttons.append({"label": label, "action": action, "tap": tap, "col": col, "row": row})
-
-
-func _btn_rect(b: Dictionary) -> Rect2:
+func _button_rect(button: TouchButton) -> Rect2:
 	var w := BW * _scale
 	var h := BH * _scale
 	var gap := GAP * _scale
 	var margin := MARGIN * _scale
-	var x: float = size.x - margin - (b.col + 1) * w - b.col * gap
-	var y: float = size.y - margin - (b.row + 1) * h - b.row * gap
+	var x := size.x - margin - (button.column + 1) * w - button.column * gap
+	var y := size.y - margin - (button.row + 1) * h - button.row * gap
 	return Rect2(x, y, w, h)
 
 
-# Highest point the on-screen controls reach, so other panels can stay clear of them.
-func controls_top() -> float:
-	var top := size.y
-	for b in _buttons:
-		top = minf(top, _btn_rect(b).position.y)
-	return top
-
-
-func _btn_hit_rect(b: Dictionary) -> Rect2:
-	return _btn_rect(b).grow(HIT_PAD * _scale)
+func _menu_rect() -> Rect2:
+	var side := MENU_SIZE * _scale
+	var margin := MARGIN * _scale
+	return Rect2(size.x - margin - side, margin, side, side)
 
 
 func _input(event: InputEvent) -> void:
@@ -121,96 +136,54 @@ func _input(event: InputEvent) -> void:
 			_on_press(event.index, event.position)
 		else:
 			_on_release(event.index)
-	elif event is InputEventScreenDrag:
-		_on_drag(event.index, event.position)
+	elif event is InputEventScreenDrag and _look_touches.has(event.index):
+		touch_service.look_delta += event.position - _look_touches[event.index]
+		_look_touches[event.index] = event.position
 
 
 func _on_press(index: int, pos: Vector2) -> void:
-	var hud := get_tree().get_first_node_in_group("hud") as Hud
-	if hud != null and hud.is_touch_over_ui(pos):
+	if _menu_rect().grow(HIT_PAD * _scale).has_point(pos):
+		var hud := get_tree().get_first_node_in_group("hud") as Hud
+		if hud != null:
+			hud.open_menu()
 		return
-	for b in _buttons:
-		if _btn_hit_rect(b).has_point(pos):
-			if b.action != "":
-				Input.action_press(b.action)
-			if b.tap.is_valid():
-				b.tap.call()
-			_touches[index] = {"kind": "button", "btn": b}
+	for button in _buttons:
+		if _button_rect(button).grow(HIT_PAD * _scale).has_point(pos):
+			if not button.action.is_empty():
+				Input.action_press(button.action)
+			if button.tap.is_valid():
+				button.tap.call()
+			_button_touches[index] = button
+			queue_redraw()
 			return
-	if not _joy_active and pos.x < size.x * 0.5:
-		_joy_active = true
-		_joy_center = _clamp_joy_center(pos)
-		_touches[index] = {"kind": "joy"}
-		_update_joy(pos)
+	# The stick handles its own touches through the GUI.
+	if _stick.get_global_rect().has_point(pos):
 		return
-	_touches[index] = {"kind": "look", "last": pos}
-
-
-# The stick spawns under the thumb, but its ring must stay fully on screen.
-func _clamp_joy_center(pos: Vector2) -> Vector2:
-	var r := JOY_RADIUS * _scale + KNOB_RADIUS * _scale
-	return Vector2(clampf(pos.x, r, size.x - r), clampf(pos.y, r, size.y - r))
-
-
-func _on_drag(index: int, pos: Vector2) -> void:
-	if not _touches.has(index):
-		return
-	var t: Dictionary = _touches[index]
-	if t.kind == "joy":
-		_update_joy(pos)
-	elif t.kind == "look":
-		touch_service.look_delta += pos - t.last
-		t.last = pos
+	_look_touches[index] = pos
 
 
 func _on_release(index: int) -> void:
-	if not _touches.has(index):
-		return
-	var t: Dictionary = _touches[index]
-	if t.kind == "button" and t.btn.action != "":
-		Input.action_release(t.btn.action)
-	elif t.kind == "joy":
-		_joy_active = false
-		_joy_knob = Vector2.ZERO
-		_joy_center = _joy_home()
-		_apply_joy(Vector2.ZERO)
+	if _button_touches.has(index):
+		var button := _button_touches[index]
+		if not button.action.is_empty():
+			Input.action_release(button.action)
+		_button_touches.erase(index)
 		queue_redraw()
-	_touches.erase(index)
+	_look_touches.erase(index)
 
 
-func _update_joy(pos: Vector2) -> void:
-	var radius := JOY_RADIUS * _scale
-	var off := pos - _joy_center
-	if off.length() > radius:
-		off = off.normalized() * radius
-	_joy_knob = off
-	_apply_joy(off / radius)
-	queue_redraw()
-
-
-func _apply_joy(vec: Vector2) -> void:
-	_set_axis("move_left", "move_right", vec.x)
-	_set_axis("move_forward", "move_back", vec.y)
-
-
-func _set_axis(neg: String, pos: String, v: float) -> void:
-	if v > 0.001:
-		Input.action_press(pos, v)
-		Input.action_release(neg)
-	elif v < -0.001:
-		Input.action_press(neg, -v)
-		Input.action_release(pos)
-	else:
-		Input.action_release(neg)
-		Input.action_release(pos)
+func _notification(what: int) -> void:
+	# A finger lifted while the app is in the background never sends its release.
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		_release_all_holds()
+		_look_touches.clear()
 
 
 func _release_all_holds() -> void:
-	for a in HOLD_ACTIONS:
-		Input.action_release(a)
-	for i in _touches.keys():
-		if _touches[i].kind == "button":
-			_touches.erase(i)
+	for button in _button_touches.values():
+		if not button.action.is_empty():
+			Input.action_release(button.action)
+	_button_touches.clear()
 
 
 func _interact() -> void:
@@ -228,45 +201,28 @@ func _respawn() -> void:
 
 
 func _toggle_map() -> void:
-	var hud := get_tree().get_first_node_in_group("hud")
+	var hud := get_tree().get_first_node_in_group("hud") as Hud
 	if hud != null:
 		hud.planet_markers_visible = not hud.planet_markers_visible
 
 
 func _draw() -> void:
-	var radius := JOY_RADIUS * _scale
-	var knob := KNOB_RADIUS * _scale
-	var idle := 1.0 if _joy_active else 0.55
-	draw_circle(_joy_center, radius, Color(0.08, 0.20, 0.34, 0.46 * idle))
-	draw_arc(_joy_center, radius, 0.0, TAU, 48, Color(0.40, 0.78, 1.0, 0.65 * idle), 2.0 * _scale)
-	draw_circle(_joy_center + _joy_knob, knob, Color(0.40, 0.78, 1.0, 0.62 * idle))
-	draw_arc(_joy_center + _joy_knob, knob, 0.0, TAU, 32, Color(0.78, 0.93, 1.0, 0.75 * idle), 1.5 * _scale)
-	for b in _buttons:
-		var r := _btn_rect(b)
-		var accent := _button_accent(b.label)
-		var held := _is_held(b)
-		var fill := Color(accent, 0.42 if held else 0.22)
-		draw_style_box(_touch_button_style(fill, accent, held), r)
-		if _font == null:
-			continue
-		var icon_size := ICON_SIZE * _scale
-		var caption_size := CAPTION_SIZE * _scale
-		var icon := _button_icon(b.label)
-		var icon_width := _font.get_string_size(icon, HORIZONTAL_ALIGNMENT_LEFT, -1, int(icon_size)).x
-		var icon_at := r.position + Vector2((r.size.x - icon_width) * 0.5, r.size.y * 0.55)
-		draw_string(_font, icon_at, icon, HORIZONTAL_ALIGNMENT_LEFT, -1, int(icon_size), Color(0.94, 0.98, 1.0, 0.98))
-		var caption := _button_caption(b.label)
-		var caption_width := _font.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, int(caption_size)).x
-		var caption_at := r.position + Vector2((r.size.x - caption_width) * 0.5, r.size.y * 0.85)
-		draw_string(_font, caption_at, caption, HORIZONTAL_ALIGNMENT_LEFT, -1, int(caption_size), Color(0.82, 0.91, 1.0, 0.9))
+	var menu := _menu_rect()
+	draw_style_box(_button_style(Color(0.08, 0.16, 0.26, 0.55), Color(ACCENT, 0.7)), menu)
+	_draw_centered(menu, "☰", ICON_SIZE * 0.85, 0.6)
+	for button in _buttons:
+		var rect := _button_rect(button)
+		var accent := _button_accent(button.label)
+		var held := _button_touches.values().has(button)
+		draw_style_box(_button_style(Color(accent, 0.42 if held else 0.22), Color(accent, 1.0 if held else 0.72)), rect)
+		_draw_centered(rect, _button_icon(button.label), ICON_SIZE, 0.55)
+		_draw_centered(rect, button.label, CAPTION_SIZE, 0.85)
 
 
-func _is_held(b: Dictionary) -> bool:
-	for i in _touches:
-		var t: Dictionary = _touches[i]
-		if t.kind == "button" and t.btn == b:
-			return true
-	return false
+func _draw_centered(rect: Rect2, text: String, font_size: float, height: float) -> void:
+	var pixels := int(font_size * _scale)
+	var width := _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, pixels).x
+	draw_string(_font, rect.position + Vector2((rect.size.x - width) * 0.5, rect.size.y * height), text, HORIZONTAL_ALIGNMENT_LEFT, -1, pixels, Color(0.94, 0.98, 1.0, 0.95))
 
 
 func _button_icon(label: String) -> String:
@@ -275,9 +231,9 @@ func _button_icon(label: String) -> String:
 			return "▲"
 		"Sprint", "Down":
 			return "▼"
-		"E":
+		"Interact":
 			return "✦"
-		"R":
+		"Respawn":
 			return "↻"
 		"Brake":
 			return "■"
@@ -292,33 +248,22 @@ func _button_icon(label: String) -> String:
 	return "•"
 
 
-func _button_caption(label: String) -> String:
-	match label:
-		"E":
-			return "Interact"
-		"R":
-			return "Respawn"
-	return label
-
-
 func _button_accent(label: String) -> Color:
 	if label in ["Jump", "Up", "Sprint", "Down"]:
 		return Color(0.35, 0.82, 1.0)
-	if label in ["E", "Exit"]:
+	if label in ["Interact", "Exit"]:
 		return Color(0.45, 1.0, 0.70)
 	if label == "Brake":
 		return Color(1.0, 0.56, 0.36)
-	if label in ["R", "Roll R", "Roll L"]:
+	if label in ["Respawn", "Roll R", "Roll L"]:
 		return Color(1.0, 0.78, 0.36)
-	if label == "Map":
-		return Color(0.65, 0.85, 1.0)
-	return Color(0.65, 0.78, 1.0)
+	return Color(0.65, 0.85, 1.0)
 
 
-func _touch_button_style(fill: Color, accent: Color, held: bool) -> StyleBoxFlat:
+func _button_style(fill: Color, border: Color) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = fill
-	style.border_color = Color(accent, 1.0 if held else 0.72)
-	style.set_border_width_all(int(maxf(1.0, roundf(_scale))))
-	style.set_corner_radius_all(int(12.0 * _scale))
+	style.border_color = border
+	style.set_border_width_all(maxi(1, roundi(_scale)))
+	style.set_corner_radius_all(roundi(12.0 * _scale))
 	return style

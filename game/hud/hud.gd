@@ -1,11 +1,10 @@
 class_name Hud
 extends CanvasLayer
 
-const BonificationMathScript := preload("res://game/shared/bonification_math.gd")
 const HudGlobeScript := preload("res://game/hud/hud_globe.gd")
 
 class NavigationOverlay extends Control:
-	var hud: CanvasLayer
+	var hud: Hud
 
 
 	func _process(_delta: float) -> void:
@@ -16,49 +15,27 @@ class NavigationOverlay extends Control:
 		hud.draw_navigation(self)
 
 
-var ship: Ship = null
-var tracked_ship: Ship = null
-var prompt_label: Label
-var info_label: Label
-var hint_label: Label
-var teleport_root: Control
-var teleport_panel: PanelContainer
-var teleport_menu: Button
-var teleport_dropdown: PanelContainer
-var planet_buttons: Array[Button] = []
-var debug_buttons: Array[Button] = []
-var gravity_button: Button
-var orbit_button: Button
-var supernova_button: Button
-var leviathan_button: Button
-var navigation_overlay: NavigationOverlay
-var globe: Control
-var planet_markers_visible := false
-var celestial_bodies: Array[CelestialBody] = []
-var gravity_debug_visible := false
-var _dropdown_open := false
-var _gamepad_hints := false
-var _prompt_action := ""
-var _selected_planet_name := ""
-var locked_body: CelestialBody
-var aimed_body: CelestialBody
-var ui_scale := 1.0
-@onready var gravity_service: GravityService = get_node("/root/Gravity")
-@onready var touch_service: TouchService = get_node("/root/Touch")
+class Marker extends RefCounted:
+	var label: String
+	var position: Vector2
+	var distance: float
+	var color: Color
+	var direction := Vector2.ZERO
 
-const HINT_FOOT_KEYS := "WASD walk · Space jump (hold higher, press again in air for jetpack) · Shift sprint/descend · X brake · E interact · Tab map · R respawn"
-const HINT_SHIP_KEYS := "WASD thrust · Space/Shift up/down · Mouse steer · LMB lock · Z/C roll · X brake · Tab map · E exit"
-const HINT_FOOT_PAD := "Left stick move · Right stick look · A jump · LT sprint/descend · B brake · X interact · View map · Y respawn"
-const HINT_SHIP_PAD := "Left stick thrust · Right stick steer · A/LT up/down · RT/B brake · LB/RB roll · R3 lock · Menu/View map · X exit"
-const MARKER_MARGIN := 42.0
+
+const TEXT_COLOR := Color(0.90, 0.96, 1.0)
+const MUTED_COLOR := Color(0.60, 0.72, 0.84)
+const ACCENT_COLOR := Color(0.42, 0.86, 1.0)
+const DANGER_COLOR := Color(1.0, 0.42, 0.32)
+const PANEL_COLOR := Color(0.02, 0.04, 0.08, 0.74)
 const SHIP_COLOR := Color(0.35, 0.85, 1.0, 0.9)
-const PLANET_COLOR := Color(1.0, 0.82, 0.42, 0.82)
-const UI_PANEL_COLOR := Color(0.025, 0.045, 0.10, 0.94)
-const UI_BORDER_COLOR := Color(0.22, 0.55, 0.86, 0.65)
-const UI_ACCENT_COLOR := Color(0.35, 0.82, 1.0)
+const PLANET_COLOR := Color(1.0, 0.82, 0.42, 0.85)
 const TARGET_COLOR := Color(0.35, 0.92, 1.0, 0.95)
 const AIM_COLOR := Color(1.0, 0.82, 0.38, 0.75)
+const MARKER_MARGIN := 42.0
 const LOCK_ANGLE := deg_to_rad(30.0)
+const HINT_HOLD_MS := 10000
+const HINT_RESTING_ALPHA := 0.35
 const GRAVITY_COLORS := [
 	Color(1.0, 0.4, 0.3, 0.9),
 	Color(0.4, 0.85, 1.0, 0.9),
@@ -66,233 +43,389 @@ const GRAVITY_COLORS := [
 	Color(0.9, 0.55, 1.0, 0.9),
 	Color(1.0, 0.78, 0.3, 0.9),
 ]
+const HINTS_FOOT_KEYS := [["WASD", "Move"], ["Space", "Jump · jetpack"], ["Shift", "Sprint"], ["E", "Interact"], ["Tab", "Map"], ["R", "Respawn"], ["Esc", "Menu"]]
+const HINTS_SHIP_KEYS := [["WASD", "Thrust"], ["Space/Shift", "Up · down"], ["Mouse", "Steer"], ["Z/C", "Roll"], ["X", "Brake"], ["LMB", "Lock"], ["E", "Exit"], ["Esc", "Menu"]]
+const HINTS_FOOT_PAD := [["LS", "Move"], ["RS", "Look"], ["A", "Jump"], ["LT", "Sprint"], ["X", "Interact"], ["View", "Map"], ["Y", "Respawn"], ["Start", "Menu"]]
+const HINTS_SHIP_PAD := [["LS", "Thrust"], ["RS", "Steer"], ["A/LT", "Up · down"], ["LB/RB", "Roll"], ["RT", "Brake"], ["R3", "Lock"], ["X", "Exit"], ["Start", "Menu"]]
+
+var ship: Ship = null
+var tracked_ship: Ship = null
+var player: Player = null
+var celestial_bodies: Array[CelestialBody] = []
+var planet_markers_visible := false
+var gravity_debug_visible := false
+var locked_body: CelestialBody
+var aimed_body: CelestialBody
+var ui_scale := 1.0
+
+var _root: Control
+var _overlay: NavigationOverlay
+var _globe: HudGlobe
+var _readout: PanelContainer
+var _readout_title: Label
+var _readout_values: Array[Label] = []
+var _readout_vertical_row: Array[Label] = []
+var _prompt: HBoxContainer
+var _prompt_key: Label
+var _prompt_text: Label
+var _hints_bar: PanelContainer
+var _hints: HBoxContainer
+var _menu: Control
+var _menu_first_button: Button
+var _planet_buttons: Dictionary = {}
+var _fast_time_button: Button
+var _gravity_button: Button
+var _supernova_button: Button
+var _leviathan_button: Button
+var _gamepad := false
+var _prompt_action := ""
+var _selected_planet: StringName = &""
+var _hints_shown_at := 0
+@onready var gravity_service: GravityService = get_node("/root/Gravity")
+@onready var touch_service: TouchService = get_node("/root/Touch")
 
 
 func _ready() -> void:
 	add_to_group("hud")
-	ui_scale = touch_service.ui_scale(get_viewport().get_visible_rect().size)
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	var main := get_parent() as Main
 	if main != null:
 		tracked_ship = main.ship
+		player = main.player
 	for body in get_tree().get_nodes_in_group("celestial_body"):
 		if body is CelestialBody:
 			celestial_bodies.append(body)
-	_build_navigation_overlay()
-	_build_globe()
+	_root = Control.new()
+	_root.name = "HudRoot"
+	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(_root)
+	_build()
+	get_viewport().size_changed.connect(_rebuild)
 
-	var crosshair := Label.new()
-	crosshair.text = "+"
-	crosshair.set_anchors_preset(Control.PRESET_CENTER)
-	crosshair.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	crosshair.grow_vertical = Control.GROW_DIRECTION_BOTH
-	crosshair.add_theme_font_size_override("font_size", _px(22))
-	add_child(crosshair)
 
-	prompt_label = Label.new()
-	prompt_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	prompt_label.position.y -= 120.0 * ui_scale
-	prompt_label.add_theme_font_size_override("font_size", _px(20))
-	prompt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	prompt_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	add_child(prompt_label)
+func _rebuild() -> void:
+	close_menu()
+	_menu_first_button = null
+	for child in _root.get_children():
+		child.queue_free()
+	_planet_buttons.clear()
+	_readout_values.clear()
+	_readout_vertical_row.clear()
+	_build()
 
-	info_label = Label.new()
-	info_label.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	info_label.position = Vector2(16, 16) * ui_scale
-	info_label.add_theme_font_size_override("font_size", _px(18))
-	add_child(info_label)
 
-	hint_label = Label.new()
-	hint_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	hint_label.position.y -= 40
-	hint_label.add_theme_font_size_override("font_size", 14)
-	hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hint_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	hint_label.modulate = Color(1, 1, 1, 0.5)
-	hint_label.text = HINT_FOOT_KEYS
-	hint_label.visible = not touch_service.is_touch_ui()
-	add_child(hint_label)
-	_build_teleport_menu()
-	_build_gravity_debug_panel()
-	get_viewport().size_changed.connect(layout_panels)
-	layout_panels.call_deferred()
+func _build() -> void:
+	ui_scale = touch_service.ui_scale(get_viewport().get_visible_rect().size)
+	_root.theme = _build_theme()
+	_overlay = NavigationOverlay.new()
+	_overlay.name = "NavigationOverlay"
+	_overlay.hud = self
+	_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_root.add_child(_overlay)
+	_globe = HudGlobeScript.new()
+	_globe.name = "HudGlobe"
+	_globe.hud = self
+	_globe.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(_globe)
+	_build_readout()
+	_build_prompt()
+	_build_hints()
+	_build_menu()
+	_refresh_hints()
+	layout_panels()
 
 
 func _px(value: float) -> int:
 	return int(roundf(value * ui_scale))
 
 
-func _build_navigation_overlay() -> void:
-	navigation_overlay = NavigationOverlay.new()
-	navigation_overlay.name = "NavigationOverlay"
-	navigation_overlay.hud = self
-	navigation_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	navigation_overlay.position = Vector2.ZERO
-	navigation_overlay.size = get_viewport().get_visible_rect().size
-	add_child(navigation_overlay)
+func _build_theme() -> Theme:
+	var theme := Theme.new()
+	theme.default_font_size = _px(14)
+	theme.set_color("font_color", "Label", TEXT_COLOR)
+	theme.set_stylebox("panel", "PanelContainer", _box(PANEL_COLOR, Color(ACCENT_COLOR, 0.22), 10.0, Vector2(14.0, 10.0)))
+	theme.set_stylebox("normal", "Button", _box(Color(0.06, 0.12, 0.20, 0.85), Color(ACCENT_COLOR, 0.25), 8.0, Vector2(12.0, 8.0)))
+	theme.set_stylebox("hover", "Button", _box(Color(0.10, 0.20, 0.32, 0.95), Color(ACCENT_COLOR, 0.7), 8.0, Vector2(12.0, 8.0)))
+	theme.set_stylebox("pressed", "Button", _box(Color(0.12, 0.32, 0.46, 1.0), ACCENT_COLOR, 8.0, Vector2(12.0, 8.0)))
+	theme.set_stylebox("hover_pressed", "Button", _box(Color(0.14, 0.36, 0.52, 1.0), ACCENT_COLOR, 8.0, Vector2(12.0, 8.0)))
+	theme.set_stylebox("focus", "Button", _box(Color(0, 0, 0, 0), Color(1.0, 1.0, 1.0, 0.9), 8.0, Vector2(12.0, 8.0), 2))
+	theme.set_stylebox("disabled", "Button", _box(Color(0.04, 0.06, 0.10, 0.7), Color(MUTED_COLOR, 0.2), 8.0, Vector2(12.0, 8.0)))
+	theme.set_color("font_color", "Button", TEXT_COLOR)
+	theme.set_color("font_hover_color", "Button", Color.WHITE)
+	theme.set_color("font_pressed_color", "Button", Color.WHITE)
+	theme.set_color("font_focus_color", "Button", Color.WHITE)
+	theme.set_color("font_disabled_color", "Button", Color(MUTED_COLOR, 0.6))
+	return theme
 
 
-func _build_globe() -> void:
-	globe = HudGlobeScript.new()
-	globe.name = "HudGlobe"
-	globe.hud = self
-	globe.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(globe)
+func _box(fill: Color, border: Color, radius: float, padding: Vector2, border_width := 1) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = fill
+	style.border_color = border
+	style.set_border_width_all(maxi(border_width, roundi(border_width * ui_scale)))
+	style.set_corner_radius_all(_px(radius))
+	style.content_margin_left = padding.x * ui_scale
+	style.content_margin_right = padding.x * ui_scale
+	style.content_margin_top = padding.y * ui_scale
+	style.content_margin_bottom = padding.y * ui_scale
+	return style
 
 
-func _build_teleport_menu() -> void:
-	teleport_root = Control.new()
-	teleport_root.name = "PlanetTeleportRoot"
-	teleport_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(teleport_root)
-	teleport_panel = PanelContainer.new()
-	teleport_panel.name = "PlanetTeleportPanel"
-	teleport_panel.mouse_filter = Control.MOUSE_FILTER_PASS
-	teleport_panel.z_index = 10
-	teleport_panel.add_theme_stylebox_override("panel", _panel_style())
-	var content := VBoxContainer.new()
-	content.add_theme_constant_override("separation", _px(6))
-	var title := Label.new()
-	title.text = "PLANET NAVIGATION"
-	title.add_theme_font_size_override("font_size", _px(11))
-	title.add_theme_color_override("font_color", Color(0.62, 0.78, 0.95))
-	content.add_child(title)
+func _label(text: String, size: float, color := TEXT_COLOR) -> Label:
 	var label := Label.new()
-	label.text = "Teleport to planet"
-	label.add_theme_font_size_override("font_size", _px(14))
-	content.add_child(label)
-	teleport_menu = Button.new()
-	teleport_menu.name = "PlanetTeleportMenu"
-	teleport_menu.text = "Choose planet"
-	teleport_menu.custom_minimum_size = Vector2(0.0, 40.0 * ui_scale)
-	teleport_menu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	teleport_menu.focus_mode = Control.FOCUS_NONE
-	teleport_menu.add_theme_font_size_override("font_size", _px(14))
-	_apply_button_theme(teleport_menu, UI_ACCENT_COLOR)
-	_make_ui_button(teleport_menu)
-	teleport_menu.pressed.connect(_toggle_planet_dropdown)
-	content.add_child(teleport_menu)
-	teleport_panel.add_child(content)
-	teleport_root.add_child(teleport_panel)
-
-	teleport_dropdown = PanelContainer.new()
-	teleport_dropdown.name = "PlanetTeleportDropdown"
-	teleport_dropdown.mouse_filter = Control.MOUSE_FILTER_PASS
-	teleport_dropdown.z_index = 20
-	teleport_dropdown.add_theme_stylebox_override("panel", _panel_style())
-	var scroll := ScrollContainer.new()
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var list := VBoxContainer.new()
-	list.name = "PlanetList"
-	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	list.add_theme_constant_override("separation", _px(5))
-	planet_buttons.clear()
-	for body in celestial_bodies:
-		if not body is PlanetBody:
-			continue
-		var planet_button := Button.new()
-		planet_button.name = "%sButton" % body.name.replace(" ", "")
-		planet_button.text = body.name
-		planet_button.custom_minimum_size = Vector2(0.0, 42.0 * ui_scale)
-		planet_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		planet_button.toggle_mode = true
-		planet_button.focus_mode = Control.FOCUS_NONE
-		planet_button.add_theme_font_size_override("font_size", _px(14))
-		_apply_button_theme(planet_button, Color(0.45, 0.72, 1.0))
-		_make_ui_button(planet_button)
-		planet_button.pressed.connect(_on_planet_selected.bind(StringName(body.name)))
-		list.add_child(planet_button)
-		planet_buttons.append(planet_button)
-	scroll.add_child(list)
-	teleport_dropdown.add_child(scroll)
-	teleport_root.add_child(teleport_dropdown)
-	teleport_dropdown.visible = false
+	label.text = text
+	label.add_theme_font_size_override("font_size", _px(size))
+	label.add_theme_color_override("font_color", color)
+	return label
 
 
-func _build_gravity_debug_panel() -> void:
+func _keycap(text: String) -> PanelContainer:
+	var cap := PanelContainer.new()
+	cap.add_theme_stylebox_override("panel", _box(Color(0.9, 0.96, 1.0, 0.10), Color(ACCENT_COLOR, 0.55), 5.0, Vector2(6.0, 1.0)))
+	cap.add_child(_label(text, 12, Color.WHITE))
+	return cap
+
+
+func _build_readout() -> void:
+	_readout = PanelContainer.new()
+	_readout.name = "Readout"
+	_readout.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", _px(4))
+	_readout_title = _label("", 11, ACCENT_COLOR)
+	column.add_child(_readout_title)
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", _px(14))
+	grid.add_theme_constant_override("v_separation", _px(2))
+	for caption in ["ALT", "SPD", "V/S"]:
+		var name_label := _label(caption, 11, MUTED_COLOR)
+		var value_label := _label("—", 16)
+		grid.add_child(name_label)
+		grid.add_child(value_label)
+		_readout_values.append(value_label)
+		if caption == "V/S":
+			_readout_vertical_row = [name_label, value_label]
+	column.add_child(grid)
+	_readout.add_child(column)
+	_root.add_child(_readout)
+
+
+func _build_prompt() -> void:
+	_prompt = HBoxContainer.new()
+	_prompt.name = "Prompt"
+	_prompt.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_prompt.add_theme_constant_override("separation", _px(8))
+	var cap := _keycap("E")
+	_prompt_key = cap.get_child(0) as Label
+	_prompt.add_child(cap)
+	_prompt_text = _label("", 17)
+	_prompt_text.add_theme_constant_override("outline_size", _px(4))
+	_prompt_text.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.6))
+	_prompt.add_child(_prompt_text)
+	_prompt.set_anchors_preset(Control.PRESET_CENTER)
+	_prompt.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_prompt.position.y += 46.0 * ui_scale
+	_root.add_child(_prompt)
+
+
+func _build_hints() -> void:
+	_hints_bar = PanelContainer.new()
+	_hints_bar.name = "Hints"
+	_hints_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hints_bar.add_theme_stylebox_override("panel", _box(Color(0.01, 0.03, 0.06, 0.55), Color(ACCENT_COLOR, 0.12), 16.0, Vector2(14.0, 5.0)))
+	_hints = HBoxContainer.new()
+	_hints.add_theme_constant_override("separation", _px(16))
+	_hints_bar.add_child(_hints)
+	_hints_bar.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	_hints_bar.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_hints_bar.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_hints_bar.position.y -= 16.0 * ui_scale
+	_hints_bar.visible = not touch_service.is_touch_ui()
+	_root.add_child(_hints_bar)
+
+
+func _build_menu() -> void:
+	_menu = Control.new()
+	_menu.name = "Menu"
+	_menu.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_menu.mouse_filter = Control.MOUSE_FILTER_STOP
+	_menu.visible = false
+	var dim := ColorRect.new()
+	dim.color = Color(0.0, 0.01, 0.03, 0.55)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_menu.add_child(dim)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_menu.add_child(center)
 	var panel := PanelContainer.new()
-	panel.name = "GravityDebugPanel"
-	panel.mouse_filter = Control.MOUSE_FILTER_PASS
-	panel.add_theme_stylebox_override("panel", _panel_style())
-	var content := VBoxContainer.new()
-	content.add_theme_constant_override("separation", _px(7))
-	var title := Label.new()
-	title.text = "DEBUG TOOLS"
-	title.add_theme_font_size_override("font_size", _px(11))
-	title.add_theme_color_override("font_color", Color(0.62, 0.78, 0.95))
-	content.add_child(title)
-	var buttons := GridContainer.new()
-	buttons.columns = 2
-	buttons.add_theme_constant_override("h_separation", _px(6))
-	buttons.add_theme_constant_override("v_separation", _px(5))
-	gravity_button = Button.new()
-	gravity_button.name = "GravityDebugToggle"
-	gravity_button.text = "Gravity: OFF"
-	gravity_button.toggle_mode = true
-	gravity_button.custom_minimum_size = Vector2(0.0, 38.0 * ui_scale)
-	gravity_button.focus_mode = Control.FOCUS_NONE
-	gravity_button.add_theme_font_size_override("font_size", _px(13))
-	_apply_button_theme(gravity_button, Color(1.0, 0.50, 0.36))
-	_make_ui_button(gravity_button)
-	gravity_button.toggled.connect(_on_gravity_debug_toggled)
-	buttons.add_child(gravity_button)
-	orbit_button = Button.new()
-	orbit_button.name = "OrbitFastForwardToggle"
-	orbit_button.text = "Fast time: OFF"
-	orbit_button.toggle_mode = true
-	orbit_button.custom_minimum_size = Vector2(0.0, 38.0 * ui_scale)
-	orbit_button.focus_mode = Control.FOCUS_NONE
-	orbit_button.add_theme_font_size_override("font_size", _px(13))
-	_apply_button_theme(orbit_button, Color(0.55, 0.78, 1.0))
-	_make_ui_button(orbit_button)
-	orbit_button.toggled.connect(_on_orbit_fast_forward_toggled)
-	buttons.add_child(orbit_button)
-	supernova_button = Button.new()
-	supernova_button.name = "SupernovaTrigger"
-	supernova_button.text = "Supernova"
-	supernova_button.custom_minimum_size = Vector2(0.0, 38.0 * ui_scale)
-	supernova_button.focus_mode = Control.FOCUS_NONE
-	supernova_button.add_theme_font_size_override("font_size", _px(13))
-	_apply_button_theme(supernova_button, Color(1.0, 0.35, 0.25))
-	_make_ui_button(supernova_button)
-	supernova_button.pressed.connect(_on_supernova_pressed)
-	buttons.add_child(supernova_button)
-	leviathan_button = Button.new()
-	leviathan_button.name = "LeviathanTrigger"
-	leviathan_button.text = "Leviathan"
-	leviathan_button.custom_minimum_size = Vector2(0.0, 38.0 * ui_scale)
-	leviathan_button.focus_mode = Control.FOCUS_NONE
-	leviathan_button.add_theme_font_size_override("font_size", _px(13))
-	_apply_button_theme(leviathan_button, Color(0.72, 0.12, 0.34))
-	_make_ui_button(leviathan_button)
-	leviathan_button.pressed.connect(_on_leviathan_pressed)
-	buttons.add_child(leviathan_button)
-	content.add_child(buttons)
-	panel.add_child(content)
-	teleport_root.add_child(panel)
-	debug_buttons = [gravity_button, orbit_button, supernova_button, leviathan_button]
+	panel.add_theme_stylebox_override("panel", _box(Color(0.02, 0.05, 0.10, 0.94), Color(ACCENT_COLOR, 0.35), 14.0, Vector2(22.0, 18.0)))
+	panel.custom_minimum_size.x = 520.0 * ui_scale
+	center.add_child(panel)
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", _px(10))
+	panel.add_child(column)
+
+	var header := HBoxContainer.new()
+	header.add_child(_label("OUTER GODOT", 22, ACCENT_COLOR))
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(spacer)
+	var resume := _menu_button("Resume", close_menu)
+	header.add_child(resume)
+	column.add_child(header)
+
+	column.add_child(_label("TRAVEL", 11, MUTED_COLOR))
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", _px(8))
+	grid.add_theme_constant_override("v_separation", _px(8))
+	for body in celestial_bodies:
+		var planet := body as PlanetBody
+		if planet == null:
+			continue
+		var button := _menu_button(String(planet.body_id), _travel_to.bind(planet.body_id))
+		button.toggle_mode = true
+		button.button_pressed = planet.body_id == _selected_planet
+		grid.add_child(button)
+		_planet_buttons[planet.body_id] = button
+		if _menu_first_button == null:
+			_menu_first_button = button
+	column.add_child(grid)
+
+	column.add_child(_label("SIMULATION", 11, MUTED_COLOR))
+	var simulation := HBoxContainer.new()
+	simulation.add_theme_constant_override("separation", _px(8))
+	_fast_time_button = _menu_button("Fast time", _on_fast_time_toggled)
+	_fast_time_button.toggle_mode = true
+	simulation.add_child(_fast_time_button)
+	_gravity_button = _menu_button("Gravity vectors", _on_gravity_toggled)
+	_gravity_button.toggle_mode = true
+	_gravity_button.button_pressed = gravity_debug_visible
+	simulation.add_child(_gravity_button)
+	simulation.add_child(_menu_button("Respawn", _on_respawn_pressed))
+	column.add_child(simulation)
+
+	column.add_child(_label("EVENTS", 11, MUTED_COLOR))
+	var events := HBoxContainer.new()
+	events.add_theme_constant_override("separation", _px(8))
+	_supernova_button = _menu_button("Supernova", _on_supernova_pressed)
+	_supernova_button.add_theme_color_override("font_color", DANGER_COLOR)
+	events.add_child(_supernova_button)
+	_leviathan_button = _menu_button("Summon leviathan", _on_leviathan_pressed)
+	_leviathan_button.add_theme_color_override("font_color", Color(1.0, 0.45, 0.62))
+	events.add_child(_leviathan_button)
+	column.add_child(events)
+
+	column.add_child(_label("Esc · Start · B to close", 11, Color(MUTED_COLOR, 0.7)))
+	_root.add_child(_menu)
 
 
-func _on_gravity_debug_toggled(enabled: bool) -> void:
-	gravity_debug_visible = enabled
-	if gravity_button != null:
-		gravity_button.text = "Gravity: ON" if enabled else "Gravity: OFF"
+func _menu_button(text: String, action: Callable) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.custom_minimum_size.y = 38.0 * ui_scale
+	button.focus_mode = Control.FOCUS_ALL
+	if action.get_argument_count() == 1:
+		button.toggled.connect(action)
+	else:
+		button.pressed.connect(action)
+	return button
 
 
-func _on_orbit_fast_forward_toggled(enabled: bool) -> void:
-	if orbit_button != null:
-		orbit_button.text = "Fast time: ON" if enabled else "Fast time: OFF"
+func layout_panels() -> void:
+	if _readout == null:
+		return
+	var viewport_size := get_viewport().get_visible_rect().size
+	var margin := 18.0 * ui_scale
+	_readout.position = Vector2(margin, margin)
+	_globe.size = Vector2(180.0, 190.0) * ui_scale
+	if touch_service.is_touch_ui():
+		_globe.position = Vector2(margin, margin + _readout.get_combined_minimum_size().y + margin)
+	else:
+		_globe.position = Vector2(margin, viewport_size.y - _globe.size.y - margin)
+
+
+func is_menu_open() -> bool:
+	return _menu != null and _menu.visible
+
+
+func open_menu() -> void:
+	if is_menu_open():
+		return
+	_refresh_menu()
+	_menu.visible = true
+	get_tree().paused = true
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	if _gamepad and _menu_first_button != null:
+		_menu_first_button.grab_focus()
+
+
+func close_menu() -> void:
+	if not is_menu_open():
+		return
+	_menu.visible = false
+	get_tree().paused = false
+	if not touch_service.is_touch_ui():
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+
+func toggle_menu() -> void:
+	if is_menu_open():
+		close_menu()
+	else:
+		open_menu()
+
+
+func _refresh_menu() -> void:
+	for body_id in _planet_buttons:
+		var button: Button = _planet_buttons[body_id]
+		button.set_pressed_no_signal(body_id == _selected_planet)
+	var celestial_system := get_tree().get_first_node_in_group("celestial_system") as CelestialSystem
+	_fast_time_button.set_pressed_no_signal(celestial_system != null and celestial_system.is_fast_forward_enabled())
+	_gravity_button.set_pressed_no_signal(gravity_debug_visible)
+	var sun := get_tree().get_first_node_in_group("sun") as Sun
+	_supernova_button.disabled = sun == null or sun.is_exploding()
+	var leviathan := get_tree().get_first_node_in_group("leviathan") as Leviathan
+	var active := leviathan != null and leviathan.is_active()
+	var devouring := leviathan != null and leviathan.is_devouring()
+	_leviathan_button.text = "Leviathan feeding" if devouring else ("Banish leviathan" if active else "Summon leviathan")
+	_leviathan_button.disabled = leviathan == null or devouring
+
+
+func _travel_to(body_id: StringName) -> void:
+	var main := get_parent() as Main
+	if main != null:
+		main.spawn_on_planet_id(body_id)
+	set_selected_planet(body_id)
+	close_menu()
+
+
+func _on_fast_time_toggled(enabled: bool) -> void:
 	var celestial_system := get_tree().get_first_node_in_group("celestial_system") as CelestialSystem
 	if celestial_system != null:
 		celestial_system.set_fast_forward_enabled(enabled)
+
+
+func _on_gravity_toggled(enabled: bool) -> void:
+	gravity_debug_visible = enabled
+
+
+func _on_respawn_pressed() -> void:
+	var main := get_parent() as Main
+	close_menu()
+	if main != null:
+		main.respawn()
 
 
 func _on_supernova_pressed() -> void:
 	var sun := get_tree().get_first_node_in_group("sun") as Sun
 	if sun != null:
 		sun.detonate()
+	close_menu()
 
 
 # Summons on the first press, sends it back on the second — but only while it is
@@ -305,192 +438,92 @@ func _on_leviathan_pressed() -> void:
 		leviathan.banish()
 	else:
 		leviathan.summon()
-	_refresh_leviathan_button()
+	close_menu()
 
 
-func _refresh_leviathan_button() -> void:
-	if leviathan_button == null:
-		return
-	var leviathan := get_tree().get_first_node_in_group("leviathan") as Leviathan
-	var active := leviathan != null and leviathan.is_active()
-	var devouring := leviathan != null and leviathan.is_devouring()
-	leviathan_button.text = "Feeding" if devouring else ("Banish" if active else "Leviathan")
-	leviathan_button.disabled = devouring
+func set_selected_planet(body_id: StringName) -> void:
+	_selected_planet = body_id
+	if is_menu_open():
+		_refresh_menu()
 
 
-func layout_panels() -> void:
-	if teleport_root == null:
-		return
-	teleport_root.position = Vector2.ZERO
-	teleport_root.size = get_viewport().get_visible_rect().size
-	if navigation_overlay != null:
-		navigation_overlay.size = teleport_root.size
-	var viewport_size := teleport_root.size
-	var margin := 16.0 * ui_scale
-	if globe != null:
-		globe.size = Vector2(180.0, 190.0) * ui_scale
-		globe.position = Vector2(margin, viewport_size.y - globe.size.y - margin)
-	var width := clampf(viewport_size.x * 0.22, 236.0 * ui_scale, 286.0 * ui_scale)
-	width = minf(width, maxf(216.0, viewport_size.x - margin * 2.0))
-	teleport_panel.anchor_left = 1.0
-	teleport_panel.anchor_right = 1.0
-	teleport_panel.anchor_top = 0.0
-	teleport_panel.anchor_bottom = 0.0
-	teleport_panel.offset_left = -width - margin
-	teleport_panel.offset_top = margin
-	teleport_panel.offset_right = -margin
-	teleport_panel.offset_bottom = margin + teleport_panel.get_combined_minimum_size().y
-	var debug_top := teleport_panel.offset_bottom + 12.0 * ui_scale
-	var debug_panel := teleport_root.get_node_or_null("GravityDebugPanel") as PanelContainer
-	if debug_panel != null:
-		debug_panel.anchor_left = 1.0
-		debug_panel.anchor_right = 1.0
-		debug_panel.anchor_top = 0.0
-		debug_panel.anchor_bottom = 0.0
-		debug_panel.offset_left = -width - margin
-		debug_panel.offset_top = debug_top
-		debug_panel.offset_right = -margin
-		debug_panel.offset_bottom = debug_top + debug_panel.get_combined_minimum_size().y
-	if teleport_dropdown != null:
-		teleport_dropdown.anchor_left = 1.0
-		teleport_dropdown.anchor_right = 1.0
-		teleport_dropdown.anchor_top = 0.0
-		teleport_dropdown.anchor_bottom = 0.0
-		teleport_dropdown.offset_left = -width - margin
-		teleport_dropdown.offset_top = debug_top
-		teleport_dropdown.offset_right = -margin
-		var wanted := minf(370.0 * ui_scale, maxf(176.0 * ui_scale, viewport_size.y * 0.52))
-		teleport_dropdown.offset_bottom = minf(teleport_dropdown.offset_top + wanted, _panel_bottom_limit(viewport_size, margin))
-
-
-# Keep panels from growing under the on-screen touch controls.
-func _panel_bottom_limit(viewport_size: Vector2, margin: float) -> float:
-	var limit := viewport_size.y - margin
-	var touch_hud := get_tree().get_first_node_in_group("touch_hud") as TouchHud
-	if touch_hud != null:
-		limit = minf(limit, touch_hud.controls_top() - margin)
-	return limit
-
-
-func _input(event: InputEvent) -> void:
-	var gamepad_event := event is InputEventJoypadButton or (event is InputEventJoypadMotion and absf(event.axis_value) > 0.5)
-	if (gamepad_event or event is InputEventKey or event is InputEventMouseButton) and gamepad_event != _gamepad_hints:
-		_gamepad_hints = gamepad_event
-		_refresh_hints()
-	if event is InputEventScreenTouch and event.pressed and _handle_touch_ui(event.position):
-		get_viewport().set_input_as_handled()
-		return
-	if event.is_action_pressed("map") or (event is InputEventKey and event.pressed and not event.echo and (event.keycode == KEY_TAB or event.physical_keycode == KEY_TAB)):
-		planet_markers_visible = not planet_markers_visible
-		get_viewport().set_input_as_handled()
-	elif event.is_action_pressed("lock_target") or (event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED):
-		if ship == null:
-			return
-		var over_ui := event is InputEventMouseButton and is_mouse_over_ui(event.position)
-		if not over_ui:
-			locked_body = null if locked_body == aimed_body else aimed_body
-			get_viewport().set_input_as_handled()
-
-
-func _on_planet_selected(body_name: StringName) -> void:
-	var main := get_parent() as Main
-	if main != null:
-		main.spawn_on_planet_id(body_name)
-	set_selected_planet(body_name)
-	_dropdown_open = true
-	teleport_dropdown.visible = true
-
-
-func _toggle_planet_dropdown() -> void:
-	_set_planet_dropdown_open(not _dropdown_open)
-
-
-func _set_planet_dropdown_open(open: bool) -> void:
-	_dropdown_open = open
-	teleport_dropdown.visible = open
-	teleport_menu.text = "Hide planets" if open else "Choose planet"
-
-
-func _handle_touch_ui(position_value: Vector2) -> bool:
-	if teleport_menu != null and teleport_menu.get_global_rect().has_point(position_value):
-		_toggle_planet_dropdown()
-		return true
-	if _dropdown_open:
-		for button in planet_buttons:
-			if button.get_global_rect().has_point(position_value):
-				_on_planet_selected(StringName(button.text))
-				return true
-		if teleport_dropdown.get_global_rect().has_point(position_value):
-			return true
-	if gravity_button != null and gravity_button.get_global_rect().has_point(position_value):
-		gravity_button.set_pressed_no_signal(not gravity_button.button_pressed)
-		_on_gravity_debug_toggled(gravity_button.button_pressed)
-		return true
-	if orbit_button != null and orbit_button.get_global_rect().has_point(position_value):
-		orbit_button.set_pressed_no_signal(not orbit_button.button_pressed)
-		_on_orbit_fast_forward_toggled(orbit_button.button_pressed)
-		return true
-	if supernova_button != null and supernova_button.get_global_rect().has_point(position_value):
-		_on_supernova_pressed()
-		return true
-	if leviathan_button != null and leviathan_button.get_global_rect().has_point(position_value):
-		if not leviathan_button.disabled:
-			_on_leviathan_pressed()
-		return true
-	return false
-
-
-func set_selected_planet(body_name: StringName) -> void:
-	_selected_planet_name = String(body_name)
-	if teleport_menu != null:
-		teleport_menu.text = "Hide planets" if _dropdown_open else "Choose planet"
-	for button in planet_buttons:
-		button.set_pressed_no_signal(button.text == _selected_planet_name)
-
-
-func is_touch_over_ui(position_value: Vector2) -> bool:
-	if teleport_menu != null and teleport_menu.get_global_rect().has_point(position_value):
-		return true
-	if _dropdown_open and teleport_dropdown != null and teleport_dropdown.get_global_rect().has_point(position_value):
-		return true
-	for button in debug_buttons:
-		if button.get_global_rect().has_point(position_value):
-			return true
-	return false
+func is_touch_over_ui(_position_value: Vector2) -> bool:
+	return is_menu_open()
 
 
 func is_mouse_over_ui(position_value: Vector2) -> bool:
 	return is_touch_over_ui(position_value)
 
 
-func _process(_delta: float) -> void:
-	_refresh_leviathan_button()
-	if ship == null:
-		info_label.text = ""
-		aimed_body = null
-		locked_body = null
+func _input(event: InputEvent) -> void:
+	var gamepad_event := event is InputEventJoypadButton or (event is InputEventJoypadMotion and absf(event.axis_value) > 0.5)
+	if (gamepad_event or event is InputEventKey or event is InputEventMouseButton) and gamepad_event != _gamepad:
+		_gamepad = gamepad_event
+		_refresh_hints()
+		if _gamepad and is_menu_open() and get_viewport().gui_get_focus_owner() == null and _menu_first_button != null:
+			_menu_first_button.grab_focus()
+	if event.is_action_pressed("menu") or (is_menu_open() and event.is_action_pressed("ui_cancel")):
+		toggle_menu()
+		get_viewport().set_input_as_handled()
 		return
+	if is_menu_open():
+		return
+	if event.is_action_pressed("map") or (event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_TAB):
+		planet_markers_visible = not planet_markers_visible
+		get_viewport().set_input_as_handled()
+	elif event.is_action_pressed("lock_target") or (event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED):
+		if ship == null:
+			return
+		locked_body = null if locked_body == aimed_body else aimed_body
+		get_viewport().set_input_as_handled()
+
+
+func _process(delta: float) -> void:
 	var camera := get_viewport().get_camera_3d()
-	aimed_body = find_aimed_body(camera, celestial_bodies) if camera != null else null
-	var speed := ship.linear_velocity.length()
-	var altitude: float = gravity_service.get_altitude(ship.global_position)
-	var text := "Speed: %.1f m/s" % speed
-	if altitude >= 0.0:
-		text += "\nAltitude: %.0f m" % altitude
-	info_label.text = text
+	aimed_body = find_aimed_body(camera, celestial_bodies) if ship != null and camera != null else null
+	if ship == null:
+		locked_body = null
+	_update_readout()
+	var held := Time.get_ticks_msec() - _hints_shown_at < HINT_HOLD_MS
+	_hints_bar.modulate.a = move_toward(_hints_bar.modulate.a, 1.0 if held else HINT_RESTING_ALPHA, delta * 1.5)
+
+
+func _update_readout() -> void:
+	var subject: Node3D = ship if ship != null else player
+	if subject == null or not is_instance_valid(subject):
+		_readout.visible = false
+		return
+	var reference := gravity_service.get_reference_body(subject.global_position)
+	_readout.visible = reference != null
+	if reference == null:
+		return
+	var velocity := ship.linear_velocity if ship != null else player.velocity
+	var relative := velocity - reference.orbital_velocity
+	var up := (subject.global_position - reference.global_position).normalized()
+	_readout_title.text = String(reference.name).to_upper()
+	var altitude := gravity_service.get_altitude(subject.global_position)
+	_readout_values[0].text = _format_distance(maxf(altitude, 0.0))
+	_readout_values[1].text = "%.1f m/s" % relative.length()
+	var vertical := relative.dot(up)
+	_readout_values[2].text = "%+.1f m/s" % (vertical if absf(vertical) >= 0.05 else 0.0)
+	for node in _readout_vertical_row:
+		node.visible = ship != null
 
 
 func draw_navigation(canvas: Control) -> void:
 	var camera := get_viewport().get_camera_3d()
 	if camera == null:
 		return
-	if is_instance_valid(tracked_ship):
-		_draw_marker(canvas, camera, tracked_ship.global_position, "SHIP", SHIP_COLOR)
+	_draw_crosshair(canvas)
+	var markers: Array[Marker] = []
+	if is_instance_valid(tracked_ship) and ship == null:
+		markers.append(_marker(camera, tracked_ship.global_position, "SHIP", SHIP_COLOR))
 	for body in celestial_bodies:
 		if not is_instance_valid(body):
 			continue
 		if planet_markers_visible or gravity_debug_visible and _has_active_gravity(body, camera.global_position):
-			_draw_marker(canvas, camera, body.global_position, body.name, PLANET_COLOR)
+			markers.append(_marker(camera, body.global_position, String(body.name), PLANET_COLOR))
+	_draw_markers(canvas, markers)
 	_draw_gravity_debug(canvas, camera)
 	if aimed_body != null and aimed_body != locked_body:
 		_draw_target(canvas, camera, aimed_body, false)
@@ -498,37 +531,64 @@ func draw_navigation(canvas: Control) -> void:
 		_draw_target(canvas, camera, locked_body, true)
 
 
-func _draw_marker(canvas: Control, camera: Camera3D, world_position: Vector3, marker_name: String, color: Color) -> void:
+func _draw_crosshair(canvas: Control) -> void:
+	if is_menu_open():
+		return
+	var center := canvas.size * 0.5
+	var color := Color(1.0, 1.0, 1.0, 0.75)
+	canvas.draw_circle(center, 1.6 * ui_scale, color)
+	for axis: Vector2 in [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]:
+		canvas.draw_line(center + axis * 5.0 * ui_scale, center + axis * 10.0 * ui_scale, Color(color, 0.5), 1.2 * ui_scale, true)
+
+
+func _marker(camera: Camera3D, world_position: Vector3, label: String, color: Color) -> Marker:
+	var marker := Marker.new()
+	marker.label = label
+	marker.color = color
+	marker.distance = camera.global_position.distance_to(world_position)
 	var viewport_size := get_viewport().get_visible_rect().size
-	var camera_position := camera.global_position
-	var local_position := camera.to_local(world_position)
-	var distance := camera_position.distance_to(world_position)
-	var screen_position: Vector2
 	var margin := MARKER_MARGIN * ui_scale
-	var offscreen := camera.is_position_behind(world_position)
-	if not offscreen:
-		screen_position = camera.unproject_position(world_position)
-		offscreen = (
-			screen_position.x < margin or screen_position.x > viewport_size.x - margin
-			or screen_position.y < margin or screen_position.y > viewport_size.y - margin
-		)
-	if offscreen:
-		var direction := Vector2(local_position.x, -local_position.y)
-		if local_position.z > 0.0:
-			direction = -direction
-		if direction.length_squared() < 0.001:
-			direction = Vector2.UP
-		screen_position = _clamp_to_screen(viewport_size * 0.5, direction.normalized(), viewport_size)
-		_draw_chevron(canvas, screen_position, direction.normalized(), color)
-	else:
-		canvas.draw_arc(screen_position, 7.0 * ui_scale, 0.0, TAU, 16, color, 1.4 * ui_scale, true)
-		canvas.draw_circle(screen_position, 1.8 * ui_scale, color)
-	var label := "%s  %s" % [marker_name, _format_distance(distance)]
-	var label_width := label.length() * 7.0 * ui_scale
-	var label_position := screen_position + Vector2(11.0, -8.0) * ui_scale
-	if label_position.x + label_width > viewport_size.x - 8.0 * ui_scale:
-		label_position.x = screen_position.x - label_width - 11.0 * ui_scale
-	canvas.draw_string(ThemeDB.fallback_font, label_position, label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, _px(13), color)
+	var behind := camera.is_position_behind(world_position)
+	if not behind:
+		marker.position = camera.unproject_position(world_position)
+		var inside := Rect2(Vector2.ONE * margin, viewport_size - Vector2.ONE * margin * 2.0).has_point(marker.position)
+		if inside:
+			return marker
+	var local_position := camera.to_local(world_position)
+	var direction := Vector2(local_position.x, -local_position.y)
+	if local_position.z > 0.0:
+		direction = -direction
+	if direction.length_squared() < 0.001:
+		direction = Vector2.UP
+	marker.direction = direction.normalized()
+	marker.position = _clamp_to_screen(viewport_size * 0.5, marker.direction, viewport_size)
+	return marker
+
+
+# Nearest first: a label that would land on one already drawn keeps its symbol
+# but drops its text, so bodies lined up behind each other stay readable.
+func _draw_markers(canvas: Control, markers: Array[Marker]) -> void:
+	markers.sort_custom(func(a: Marker, b: Marker) -> bool: return a.distance < b.distance)
+	var font := ThemeDB.fallback_font
+	var font_size := _px(13)
+	var taken: Array[Rect2] = []
+	for marker in markers:
+		if marker.direction == Vector2.ZERO:
+			canvas.draw_arc(marker.position, 7.0 * ui_scale, 0.0, TAU, 20, marker.color, 1.4 * ui_scale, true)
+			canvas.draw_circle(marker.position, 1.8 * ui_scale, marker.color)
+		else:
+			_draw_chevron(canvas, marker.position, marker.direction, marker.color)
+		var text := "%s  %s" % [marker.label, _format_distance(marker.distance)]
+		var text_size := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+		var origin := marker.position + Vector2(12.0, 4.0) * ui_scale
+		if origin.x + text_size.x > canvas.size.x - 8.0 * ui_scale:
+			origin.x = marker.position.x - text_size.x - 12.0 * ui_scale
+		var rect := Rect2(origin - Vector2(0.0, text_size.y * 0.75), text_size).grow(2.0 * ui_scale)
+		if taken.any(func(other: Rect2) -> bool: return other.intersects(rect)):
+			continue
+		taken.append(rect)
+		canvas.draw_string_outline(font, origin, text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, _px(4), Color(0, 0, 0, 0.55))
+		canvas.draw_string(font, origin, text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, marker.color)
 
 
 func _clamp_to_screen(center: Vector2, direction: Vector2, viewport_size: Vector2) -> Vector2:
@@ -544,19 +604,19 @@ func _draw_chevron(canvas: Control, position_value: Vector2, direction: Vector2,
 	var side := direction.rotated(PI * 0.5)
 	var tip := position_value + direction * 7.0 * ui_scale
 	var tail := position_value - direction * 6.0 * ui_scale
-	canvas.draw_polyline(PackedVector2Array([tail + side * 5.0 * ui_scale, tip, tail - side * 5.0 * ui_scale]), color, 1.5 * ui_scale, true)
+	canvas.draw_polyline(PackedVector2Array([tail + side * 5.0 * ui_scale, tip, tail - side * 5.0 * ui_scale]), color, 1.6 * ui_scale, true)
 
 
 func _draw_gravity_debug(canvas: Control, camera: Camera3D) -> void:
 	if not gravity_debug_visible:
 		return
-	var origin := get_viewport().get_visible_rect().size * 0.5
+	var origin := canvas.size * 0.5
 	var observer_position := camera.global_position
 	var color_index := 0
 	for body in celestial_bodies:
 		if not is_instance_valid(body):
 			continue
-		var acceleration: Vector3 = gravity_service.get_gravity_from(body, observer_position)
+		var acceleration := gravity_service.get_gravity_from(body, observer_position)
 		if acceleration.length_squared() <= 0.0:
 			continue
 		var color: Color = GRAVITY_COLORS[color_index % GRAVITY_COLORS.size()]
@@ -579,8 +639,7 @@ func _draw_target(canvas: Control, camera: Camera3D, body: CelestialBody, locked
 	if camera.is_position_behind(body.global_position):
 		return
 	var center := camera.unproject_position(body.global_position)
-	var radius := body.radius
-	var edge := camera.unproject_position(body.global_position + camera.global_basis.x * radius)
+	var edge := camera.unproject_position(body.global_position + camera.global_basis.x * body.radius)
 	var ring_radius := clampf(center.distance_to(edge) * (1.12 if locked else 1.06), 13.0 * ui_scale, 260.0 * ui_scale)
 	var color := TARGET_COLOR if locked else AIM_COLOR
 	canvas.draw_arc(center, ring_radius, 0.0, TAU, 48, color, (2.2 if locked else 1.2) * ui_scale, true)
@@ -589,10 +648,11 @@ func _draw_target(canvas: Control, camera: Camera3D, body: CelestialBody, locked
 	var direction := (body.global_position - camera.global_position).normalized()
 	var surface_radius := body.get_surface_radius_towards(-direction)
 	var surface_distance := maxf(camera.global_position.distance_to(body.global_position) - surface_radius, 0.0)
-	var relative := relative_velocity_components(ship.linear_velocity, body.orbital_velocity, direction, camera.global_basis.y, camera.global_basis.x)
-	var target_state := "LOCKED" if locked else "TARGET"
-	var label := "%s  %s\nSurface %s\nApproach %+.1f m/s" % [body.name, target_state, _format_distance(surface_distance), relative.z]
-	canvas.draw_multiline_string(ThemeDB.fallback_font, center + Vector2(ring_radius + 12.0 * ui_scale, -8.0 * ui_scale), label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, _px(14), -1, color)
+	var relative := BonificationMath.relative_velocity_components(ship.linear_velocity, body.orbital_velocity, direction, camera.global_basis.y, camera.global_basis.x)
+	var label := "%s  %s\nSurface %s\nApproach %+.1f m/s" % [body.name, "LOCKED" if locked else "TARGET", _format_distance(surface_distance), relative.z]
+	var origin := center + Vector2(ring_radius + 12.0 * ui_scale, -8.0 * ui_scale)
+	canvas.draw_multiline_string_outline(ThemeDB.fallback_font, origin, label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, _px(14), -1, _px(4), Color(0, 0, 0, 0.55))
+	canvas.draw_multiline_string(ThemeDB.fallback_font, origin, label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, _px(14), -1, color)
 	_draw_velocity_indicator(canvas, center, ring_radius, Vector2.RIGHT, relative.x, color)
 	_draw_velocity_indicator(canvas, center, ring_radius, Vector2.UP, relative.y, color)
 
@@ -608,14 +668,6 @@ func _draw_velocity_indicator(canvas: Control, center: Vector2, ring_radius: flo
 	_draw_chevron(canvas, end, direction, color)
 
 
-static func relative_velocity_components(ship_velocity: Vector3, body_velocity: Vector3, direction_to_body: Vector3, camera_up: Vector3, camera_right: Vector3) -> Vector3:
-	return BonificationMathScript.relative_velocity_components(ship_velocity, body_velocity, direction_to_body, camera_up, camera_right)
-
-
-static func ray_sphere_distance(center: Vector3, radius: float, origin: Vector3, direction: Vector3) -> float:
-	return BonificationMathScript.ray_sphere_distance(center, radius, origin, direction)
-
-
 static func find_aimed_body(camera: Camera3D, bodies: Array[CelestialBody]) -> CelestialBody:
 	var best: CelestialBody
 	var nearest := INF
@@ -623,7 +675,7 @@ static func find_aimed_body(camera: Camera3D, bodies: Array[CelestialBody]) -> C
 	for body in bodies:
 		if not is_instance_valid(body):
 			continue
-		var hit := ray_sphere_distance(body.global_position, body.radius, camera.global_position, direction)
+		var hit := BonificationMath.ray_sphere_distance(body.global_position, body.radius, camera.global_position, direction)
 		if hit < nearest:
 			nearest = hit
 			best = body
@@ -655,72 +707,39 @@ func _format_distance(distance: float) -> String:
 
 func set_prompt(text: String) -> void:
 	_prompt_action = text
-	_refresh_hints()
+	_refresh_prompt()
+
+
+func _refresh_prompt() -> void:
+	_prompt.visible = not _prompt_action.is_empty()
+	_prompt_text.text = _prompt_action
+	_prompt_key.text = "✦" if touch_service.is_touch_ui() else ("X" if _gamepad else "E")
 
 
 func _refresh_hints() -> void:
-	if ship:
-		hint_label.text = HINT_SHIP_PAD if _gamepad_hints else HINT_SHIP_KEYS
-	else:
-		hint_label.text = HINT_FOOT_PAD if _gamepad_hints else HINT_FOOT_KEYS
-	if _prompt_action.is_empty():
-		prompt_label.text = ""
-	else:
-		var key := "Interact" if touch_service.is_touch_ui() else ("X" if _gamepad_hints else "E")
-		prompt_label.text = "%s: %s" % [key, _prompt_action]
+	_refresh_prompt()
+	for child in _hints.get_children():
+		_hints.remove_child(child)
+		child.queue_free()
+	var hints: Array = (HINTS_SHIP_PAD if _gamepad else HINTS_SHIP_KEYS) if ship != null else (HINTS_FOOT_PAD if _gamepad else HINTS_FOOT_KEYS)
+	for hint: Array in hints:
+		var chip := HBoxContainer.new()
+		chip.add_theme_constant_override("separation", _px(5))
+		chip.add_child(_keycap(hint[0]))
+		var text := _label(hint[1], 12, Color(TEXT_COLOR, 0.85))
+		text.add_theme_constant_override("outline_size", _px(3))
+		text.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.5))
+		chip.add_child(text)
+		_hints.add_child(chip)
+	_hints_shown_at = Time.get_ticks_msec()
+	_hints_bar.modulate.a = 1.0
 
 
-func set_ship(value: RigidBody3D) -> void:
+func set_ship(value: Ship) -> void:
 	ship = value
-	if ship:
+	if ship != null:
 		_prompt_action = ""
 	else:
 		locked_body = null
 		aimed_body = null
 	_refresh_hints()
-
-
-func _panel_style() -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
-	style.bg_color = UI_PANEL_COLOR
-	style.border_color = UI_BORDER_COLOR
-	style.set_border_width_all(_px(1))
-	style.set_corner_radius_all(_px(12))
-	style.content_margin_left = 12.0 * ui_scale
-	style.content_margin_top = 10.0 * ui_scale
-	style.content_margin_right = 12.0 * ui_scale
-	style.content_margin_bottom = 10.0 * ui_scale
-	return style
-
-
-func _apply_button_theme(button: Button, accent: Color) -> void:
-	button.add_theme_stylebox_override("normal", _button_style(Color(0.05, 0.10, 0.20, 0.94), accent.darkened(0.25), 0.5))
-	button.add_theme_stylebox_override("hover", _button_style(Color(0.10, 0.20, 0.34, 0.98), accent, 0.85))
-	button.add_theme_stylebox_override("pressed", _button_style(Color(0.16, 0.32, 0.48, 1.0), accent.lightened(0.1), 1.0))
-	button.add_theme_stylebox_override("focus", _button_style(Color(0.10, 0.20, 0.34, 0.98), accent, 0.95))
-	button.add_theme_color_override("font_color", Color(0.88, 0.95, 1.0))
-	button.add_theme_color_override("font_hover_color", Color.WHITE)
-	button.add_theme_color_override("font_pressed_color", Color.WHITE)
-
-
-func _make_ui_button(button: Button) -> void:
-	button.mouse_filter = Control.MOUSE_FILTER_STOP
-	button.gui_input.connect(_consume_ui_pointer.bind(button))
-
-
-func _consume_ui_pointer(event: InputEvent, button: Button) -> void:
-	if event is InputEventMouseButton:
-		button.accept_event()
-
-
-func _button_style(fill: Color, border: Color, border_alpha: float) -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
-	style.bg_color = fill
-	style.border_color = Color(border, border_alpha)
-	style.set_border_width_all(_px(1))
-	style.set_corner_radius_all(_px(9))
-	style.content_margin_left = 10.0 * ui_scale
-	style.content_margin_top = 7.0 * ui_scale
-	style.content_margin_right = 10.0 * ui_scale
-	style.content_margin_bottom = 7.0 * ui_scale
-	return style
