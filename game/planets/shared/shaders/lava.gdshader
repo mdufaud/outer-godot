@@ -50,7 +50,7 @@ void fragment() {
 	float crust = fbm(p + vec3(0.0, TIME * 0.02, 0.0));
 	float cracks = fbm(p * 2.3 + vec3(TIME * 0.05, 0.0, TIME * 0.03));
 	// crust high -> dark basalt; low -> molten
-	float molten = smoothstep(0.55, 0.35, crust);
+	float molten = (1.0 - smoothstep(0.35, 0.55, crust));
 	float vein = smoothstep(0.45, 0.65, cracks) * molten;
 	float pulse = 0.8 + 0.2 * sin(TIME * 1.5 + crust * 10.0);
 	vec3 rock = base_color * (0.7 + 0.6 * crust);

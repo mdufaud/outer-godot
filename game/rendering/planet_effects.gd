@@ -79,7 +79,7 @@ func update_from_bodies(camera_position: Vector3, candidates: Array) -> void:
 	var atmosphere_data := PackedFloat32Array()
 	var lut_textures: Array[RID] = []
 	for body in bodies:
-		if ocean_data.size() / OCEAN_FLOATS >= MAX_BODIES:
+		if ocean_data.size() / OCEAN_FLOATS >= MAX_BODIES or atmosphere_data.size() / ATMOSPHERE_FLOATS >= MAX_BODIES:
 			break
 		var ocean_params: PackedFloat32Array = body.get_ocean_effect_params()
 		var ocean_index := -1

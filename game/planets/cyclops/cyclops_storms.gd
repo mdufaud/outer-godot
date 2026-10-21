@@ -584,7 +584,7 @@ func _update_storm_motion(delta: float) -> void:
 		if not bool(state.static):
 			var direction: Vector3 = state.direction
 			var velocity: Vector3 = state.velocity
-			state.velocity = (velocity - direction * velocity.dot(direction)) * 0.998
+			state.velocity = (velocity - direction * velocity.dot(direction)) * pow(0.998, delta * 60.0)
 			_storm_states[index] = state
 		var orbit: Node3D = state.orbit as Node3D
 		if is_instance_valid(orbit):

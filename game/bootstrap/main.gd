@@ -88,6 +88,7 @@ func _boot() -> void:
 	sun.position = Vector3.ZERO
 	sun.set("radius", SUN_RADIUS)
 	sun.set("surface_gravity", SUN_SURFACE_GRAVITY)
+	sun.set("death_radius", SUN_RADIUS)
 	add_child(sun)
 
 	var entries: Array[CelestialEntry] = SolarSystemManifestScript.get_entries()

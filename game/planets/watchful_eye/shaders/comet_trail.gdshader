@@ -79,7 +79,7 @@ float sample_density(vec3 position) {
 	// The cone only exists downwind; sunward of the body only the coma remains.
 	cone *= smoothstep(-body_radius * 0.6, body_radius * 0.4, rel.z);
 	// Thins out along the axis, then feathers away over the last fifth.
-	cone *= mix(1.0, 0.45, along) * smoothstep(1.0, 0.78, along);
+	cone *= mix(1.0, 0.45, along) * (1.0 - smoothstep(0.78, 1.0, along));
 	float coma = exp(-pow(distance_to_body / coma_radius, 2.0) * 2.6) * 1.5;
 	// Most samples along a ray sit outside the envelope: bail before the noise.
 	if (cone + coma < 0.006) {

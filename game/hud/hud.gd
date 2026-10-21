@@ -38,6 +38,8 @@ var planet_markers_visible := false
 var celestial_bodies: Array[Node3D] = []
 var gravity_debug_visible := false
 var _dropdown_open := false
+var _gamepad_hints := false
+var _prompt_action := ""
 var _selected_planet_name := ""
 var locked_body: Node3D
 var aimed_body: Node3D
@@ -45,8 +47,10 @@ var ui_scale := 1.0
 @onready var gravity_service: GravityService = get_node("/root/Gravity")
 @onready var touch_service: TouchService = get_node("/root/Touch")
 
-const HINT_FOOT := "Left stick move · Right stick look · A jump · LT sprint/descend · B brake · X interact · View map · Y respawn"
-const HINT_SHIP := "Left stick thrust · Right stick steer · A/LT up/down · RT/B brake · LB/RB roll · R3 lock · Menu/View map · X exit"
+const HINT_FOOT_KEYS := "WASD walk · Space jump (hold higher, press again in air for jetpack) · Shift sprint/descend · X brake · E interact · Tab map · R respawn"
+const HINT_SHIP_KEYS := "WASD thrust · Space/Shift up/down · Mouse steer · LMB lock · Z/C roll · X brake · Tab map · E exit"
+const HINT_FOOT_PAD := "Left stick move · Right stick look · A jump · LT sprint/descend · B brake · X interact · View map · Y respawn"
+const HINT_SHIP_PAD := "Left stick thrust · Right stick steer · A/LT up/down · RT/B brake · LB/RB roll · R3 lock · Menu/View map · X exit"
 const MARKER_MARGIN := 42.0
 const SHIP_COLOR := Color(0.35, 0.85, 1.0, 0.9)
 const PLANET_COLOR := Color(1.0, 0.82, 0.42, 0.82)
@@ -78,6 +82,8 @@ func _ready() -> void:
 	var crosshair := Label.new()
 	crosshair.text = "+"
 	crosshair.set_anchors_preset(Control.PRESET_CENTER)
+	crosshair.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	crosshair.grow_vertical = Control.GROW_DIRECTION_BOTH
 	crosshair.add_theme_font_size_override("font_size", _px(22))
 	add_child(crosshair)
 
@@ -102,7 +108,7 @@ func _ready() -> void:
 	hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	hint_label.modulate = Color(1, 1, 1, 0.5)
-	hint_label.text = HINT_FOOT
+	hint_label.text = HINT_FOOT_KEYS
 	hint_label.visible = not touch_service.is_touch_ui()
 	add_child(hint_label)
 	_build_teleport_menu()
@@ -366,13 +372,17 @@ func _panel_bottom_limit(viewport_size: Vector2, margin: float) -> float:
 
 
 func _input(event: InputEvent) -> void:
+	var gamepad_event := event is InputEventJoypadButton or (event is InputEventJoypadMotion and absf(event.axis_value) > 0.5)
+	if (gamepad_event or event is InputEventKey or event is InputEventMouseButton) and gamepad_event != _gamepad_hints:
+		_gamepad_hints = gamepad_event
+		_refresh_hints()
 	if event is InputEventScreenTouch and event.pressed and _handle_touch_ui(event.position):
 		get_viewport().set_input_as_handled()
 		return
 	if event.is_action_pressed("map") or (event is InputEventKey and event.pressed and not event.echo and (event.keycode == KEY_TAB or event.physical_keycode == KEY_TAB)):
 		planet_markers_visible = not planet_markers_visible
 		get_viewport().set_input_as_handled()
-	elif event.is_action_pressed("lock_target") or (event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed):
+	elif event.is_action_pressed("lock_target") or (event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED):
 		if ship == null:
 			return
 		var over_ui := event is InputEventMouseButton and is_mouse_over_ui(event.position)
@@ -645,17 +655,30 @@ func _format_distance(distance: float) -> String:
 
 
 func set_prompt(text: String) -> void:
-	prompt_label.text = text
+	_prompt_action = text
+	_refresh_hints()
+
+
+func _refresh_hints() -> void:
+	if ship:
+		hint_label.text = HINT_SHIP_PAD if _gamepad_hints else HINT_SHIP_KEYS
+	else:
+		hint_label.text = HINT_FOOT_PAD if _gamepad_hints else HINT_FOOT_KEYS
+	if _prompt_action.is_empty():
+		prompt_label.text = ""
+	else:
+		var key := "Interact" if touch_service.is_touch_ui() else ("X" if _gamepad_hints else "E")
+		prompt_label.text = "%s: %s" % [key, _prompt_action]
 
 
 func set_ship(value: RigidBody3D) -> void:
 	ship = value
-	hint_label.text = HINT_SHIP if ship else HINT_FOOT
 	if ship:
-		prompt_label.text = ""
+		_prompt_action = ""
 	else:
 		locked_body = null
 		aimed_body = null
+	_refresh_hints()
 
 
 func _panel_style() -> StyleBoxFlat:

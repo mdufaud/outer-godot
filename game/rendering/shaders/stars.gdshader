@@ -72,8 +72,8 @@ vec3 star_layer(vec3 dir, float density, float rate, float max_bright, float hal
 		hash3(cell + 5.0),
 		hash3(cell + 9.0)) - 0.5) * 0.7) / density;
 	float d = length(normalize(center) - dir) * density;
-	float core = smoothstep(0.24, 0.0, d);
-	float halo = smoothstep(0.62, 0.0, d) * halo_strength;
+	float core = (1.0 - smoothstep(0.0, 0.24, d));
+	float halo = (1.0 - smoothstep(0.0, 0.62, d)) * halo_strength;
 	float mag = (0.2 + 0.8 * pow(hash3(cell + 7.0), 3.0)) * max_bright;
 	float twinkle = 1.0 - twinkle_amt * 0.5 * (1.0 + sin(TIME * (1.0 + hash3(cell + 11.0) * 3.0) + hash3(cell) * 40.0));
 	float temp = hash3(cell + 13.0);

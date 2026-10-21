@@ -88,7 +88,7 @@ float ember_sparks(float angle, float rim) {
 	}
 	vec2 offset = vec2(fract(column_position), fract(rim * 5.0))
 		- vec2(0.3 + hash3(vec3(column, row, 3.0)) * 0.4, 0.3 + hash3(vec3(column, row, 4.0)) * 0.4);
-	float spark = smoothstep(0.14, 0.0, length(offset));
+	float spark = (1.0 - smoothstep(0.0, 0.14, length(offset)));
 	float flicker = 0.45 + 0.55 * sin(TIME * (2.0 + seed * 5.0) + seed * 30.0);
 	return spark * flicker * exp(-rim * 1.6);
 }

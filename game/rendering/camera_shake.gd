@@ -19,6 +19,8 @@ func _process(delta: float) -> void:
 	if _elapsed >= _duration:
 		_camera.h_offset = 0.0
 		_camera.v_offset = 0.0
+		_strength = 0.0
+		_duration = 0.0
 		return
 	_elapsed += delta
 	var fade := 1.0 - clampf(_elapsed / maxf(_duration, 0.001), 0.0, 1.0)

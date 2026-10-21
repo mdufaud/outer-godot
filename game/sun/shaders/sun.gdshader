@@ -61,7 +61,7 @@ void fragment() {
 	float facing = clamp(dot(normalize(NORMAL), VIEW), 0.0, 1.0);
 	float limb = pow(facing, 0.55);
 	vec3 color = mix(edge_color, body_color, limb);
-	float spots = smoothstep(0.58, 0.26, broad) * smoothstep(0.55, 0.3, convection);
+	float spots = (1.0 - smoothstep(0.26, 0.58, broad)) * (1.0 - smoothstep(0.3, 0.55, convection));
 	color = mix(color, spot_color, spots * 0.7);
 	float cells = smoothstep(0.44, 0.86, heat);
 	color = mix(color, hot_color, cells * (0.3 + 0.5 * limb));

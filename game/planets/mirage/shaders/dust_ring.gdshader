@@ -58,7 +58,7 @@ float fbm(vec3 position) {
 void vertex() {
 	local_position = VERTEX;
 	world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-	world_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
+	world_normal = normalize(MODEL_NORMAL_MATRIX * NORMAL);
 }
 
 
@@ -67,9 +67,9 @@ void fragment() {
 	// Soft on both rims so the band has no visible cut edge.
 	float band = smoothstep(inner_radius, inner_radius + 14.0, radius)
 		* (1.0 - smoothstep(outer_radius - 20.0, outer_radius, radius));
-	float angle = atan(local_position.z, local_position.x);
+	vec2 around = normalize(local_position.xz) * 5.0;
 	// Streaks follow the ring: high frequency along the angle, low across it.
-	float streaks = fbm(vec3(angle * 5.0, radius * 0.055, 0.0));
+	float streaks = fbm(vec3(around.x, radius * 0.055, around.y));
 	streaks = mix(0.45, 1.35, streaks);
 	// Dust lights up when the camera looks through it towards the sun.
 	vec3 to_camera = normalize(CAMERA_POSITION_WORLD - world_position);

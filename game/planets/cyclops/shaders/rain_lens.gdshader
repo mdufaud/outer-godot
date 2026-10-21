@@ -30,7 +30,7 @@ float droplet_layer(vec2 position, float cell_size, float life, float seed) {
 			float radius = mix(0.07, 0.17, hash(identifier + slot * 11.3));
 			radius *= smoothstep(0.0, 0.14, age) * (1.0 - smoothstep(0.7, 1.0, age));
 			float distance_to_centre = length(local - neighbour - centre * 0.72);
-			mask = max(mask, smoothstep(radius, radius * 0.45, distance_to_centre));
+			mask = max(mask, (1.0 - smoothstep(radius * 0.45, radius, distance_to_centre)));
 		}
 	}
 	return mask;
@@ -57,9 +57,9 @@ float trickle_field(vec2 position) {
 	float speed = mix(0.03, 0.075, hash(vec2(column, 3.7)));
 	float head = fract(hash(vec2(column, 9.1)) + TIME * speed);
 	float lateral = (fract(scaled.x) - 0.5) + (hash(vec2(column, 5.3)) - 0.5) * 0.55;
-	float trail = smoothstep(0.13, 0.0, position.y - head) * step(position.y, head);
-	float bead = smoothstep(0.022, 0.0, abs(position.y - head));
-	return smoothstep(0.05, 0.0, abs(lateral)) * max(bead, trail * 0.4);
+	float trail = smoothstep(-0.13, 0.0, position.y - head) * step(position.y, head);
+	float bead = (1.0 - smoothstep(0.0, 0.022, abs(position.y - head)));
+	return (1.0 - smoothstep(0.0, 0.05, abs(lateral))) * max(bead, trail * 0.4);
 }
 
 void fragment() {

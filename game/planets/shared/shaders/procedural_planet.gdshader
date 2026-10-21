@@ -274,7 +274,8 @@ void fragment() {
 	}
 
 	if (fresnel_strength_near > 0.0 || fresnel_strength_far > 0.0) {
-		float radii_from_surface = length(VERTEX) / max(planet_radius, 0.00001) - 1.0;
+		float camera_distance = distance(CAMERA_POSITION_WORLD, NODE_POSITION_WORLD) / length(MODEL_MATRIX[0].xyz);
+		float radii_from_surface = camera_distance / max(planet_radius, 0.00001) - 1.0;
 		float fresnel_t = smoothstep(0.0, 1.0, radii_from_surface);
 		float fresnel_strength = mix(fresnel_strength_near, fresnel_strength_far, fresnel_t);
 		float rim = clamp(fresnel_strength * pow(1.0 - dot(normalize(VIEW), normalize(NORMAL)), fresnel_power), 0.0, 1.0);

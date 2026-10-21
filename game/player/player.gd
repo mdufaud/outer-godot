@@ -74,14 +74,14 @@ func _capture_mouse_when_focused() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if piloting:
-		return
 	if event is InputEventMouseButton and event.pressed and not touch_service.is_touch_ui() and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 		var hud := get_tree().get_first_node_in_group("hud")
 		if hud != null and hud.has_method("is_mouse_over_ui") and hud.is_mouse_over_ui(event.position):
 			get_viewport().set_input_as_handled()
 			return
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	elif piloting:
+		return
 	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		_apply_look(event.relative)
 	elif event.is_action_pressed("interact"):
