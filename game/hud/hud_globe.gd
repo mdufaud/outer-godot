@@ -1,3 +1,4 @@
+class_name HudGlobe
 extends Control
 
 const GravityServiceScript := preload("res://game/celestial/gravity.gd")
@@ -15,12 +16,12 @@ const NORTH_COLOR := Color(1.0, 0.42, 0.34)
 const SOUTH_COLOR := Color(0.42, 0.72, 1.0)
 const PLAYER_COLOR := Color(0.45, 1.0, 0.70)
 
-var hud
-var main: Node3D
-var player: CharacterBody3D
-var _floating_origin: Node
+var hud: Hud
+var main: Main
+var player: Player
+var _floating_origin: FloatingOrigin
 var _origin_shift_total := Vector3.ZERO
-var _body: Node3D
+var _body: PlanetBody
 var _direction := Vector3.UP
 var _face := Vector3.FORWARD
 var _right := Vector3.RIGHT
@@ -37,12 +38,12 @@ var _latitude_rings: Array[PackedVector3Array] = []
 func _ready() -> void:
 	var hud_node := get_tree().get_first_node_in_group("hud")
 	if hud_node != null:
-		main = hud_node.get_parent() as Node3D
+		main = hud_node.get_parent() as Main
 	if main != null:
-		player = main.get("player") as CharacterBody3D
-		_floating_origin = main.get_node_or_null("FloatingOrigin")
+		player = main.player
+		_floating_origin = main.get_node_or_null("FloatingOrigin") as FloatingOrigin
 		if _floating_origin != null:
-			_origin_shift_total = _floating_origin.get("total_shift")
+			_origin_shift_total = _floating_origin.total_shift
 	_precompute_latitude_rings()
 	visible = false
 
@@ -55,9 +56,9 @@ func _process(delta: float) -> void:
 		visible = false
 		return
 	if _floating_origin == null and main != null:
-		_floating_origin = main.get_node_or_null("FloatingOrigin")
+		_floating_origin = main.get_node_or_null("FloatingOrigin") as FloatingOrigin
 	if _floating_origin != null:
-		var shift_total: Vector3 = _floating_origin.get("total_shift")
+		var shift_total := _floating_origin.total_shift
 		if not shift_total.is_equal_approx(_origin_shift_total):
 			_origin_shift_total = shift_total
 			queue_redraw()
@@ -212,7 +213,7 @@ func _draw_player(center: Vector2, radius: float, scale: float) -> void:
 func _draw_ship(center: Vector2, radius: float, scale: float) -> void:
 	if main == null:
 		return
-	var ship := main.get("ship") as Node3D
+	var ship := main.ship
 	if not is_instance_valid(ship) or gravity_service.get_nearest_surface(ship.global_position) != _body:
 		return
 	var ship_offset := ship.global_position - _body.global_position

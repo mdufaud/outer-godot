@@ -1,3 +1,4 @@
+class_name CameraShake
 extends Node
 
 var _strength := 0.0

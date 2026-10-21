@@ -1,3 +1,4 @@
+class_name Ship
 extends RigidBody3D
 
 const GravityServiceScript := preload("res://game/celestial/gravity.gd")
@@ -20,7 +21,7 @@ const HARD_LANDING_SPEED := 6.0
 # through the dome is unobstructed.
 const MODEL_SCENE := preload("res://assets/models/spaceship_pod.glb")
 
-var pilot: Node3D = null
+var pilot: Player = null
 var mouse_delta := Vector2.ZERO
 var cockpit_cam: Camera3D
 var exit_pos := Vector3(3.0, -1.6, 0.0)
@@ -226,13 +227,12 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 	var gravity: Vector3 = gravity_service.get_gravity(global_position)
 	state.apply_central_force(gravity * mass)
 	var source := gravity_service.get_nearest_surface(global_position)
-	if source != null and source.has_method("get_water_depth"):
-		var water_depth: float = source.get_water_depth(global_position)
+	if source != null:
+		var water_depth := source.get_water_depth(global_position)
 		var submerged := clampf((water_depth + WATER_HALF_HEIGHT) / (WATER_HALF_HEIGHT * 2.0), 0.0, 1.0)
 		if submerged > 0.0:
 			state.apply_central_force(-gravity * mass * submerged * WATER_BUOYANCY)
-			var source_velocity: Vector3 = source.get("orbital_velocity")
-			state.apply_central_force(-(state.linear_velocity - source_velocity) * mass * WATER_LINEAR_DRAG * submerged)
+			state.apply_central_force(-(state.linear_velocity - source.orbital_velocity) * mass * WATER_LINEAR_DRAG * submerged)
 			state.apply_torque(-state.angular_velocity * mass * WATER_ANGULAR_DRAG * submerged)
 	var ground_contact := state.get_contact_count() > 0 and source != null
 	if ground_contact:
@@ -240,11 +240,10 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 		var level_axis := global_basis.y.cross(local_up)
 		state.apply_torque(level_axis * GROUND_LEVEL_TORQUE * mass - state.angular_velocity * mass * 2.5)
 		if not _had_ground_contact:
-			var source_velocity: Vector3 = source.get("orbital_velocity")
-			var impact_speed := absf((state.linear_velocity - source_velocity).dot(local_up))
+			var impact_speed := absf((state.linear_velocity - source.orbital_velocity).dot(local_up))
 			if impact_speed >= HARD_LANDING_SPEED:
-				var main := get_tree().current_scene
-				if main != null and main.has_method("trigger_camera_shake"):
+				var main := get_tree().current_scene as Main
+				if main != null:
 					main.trigger_camera_shake(clampf(impact_speed * 0.006, 0.035, 0.10), 0.42)
 	_had_ground_contact = ground_contact
 	if pilot == null:
@@ -263,12 +262,12 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 	# Brake against the reference body, not against absolute space: killing the
 	# absolute velocity in orbit means killing the orbit and falling in.
 	if Input.is_action_pressed("brake"):
-		var reference := source
+		var reference: CelestialBody = source
 		if reference == null:
 			reference = gravity_service.get_strongest(global_position)
 		var reference_velocity := Vector3.ZERO
 		if reference != null:
-			reference_velocity = reference.get("orbital_velocity")
+			reference_velocity = reference.orbital_velocity
 		var relative := state.linear_velocity - reference_velocity
 		if relative.length() > 0.3:
 			state.apply_central_force(-relative.normalized() * BRAKE_ACCEL * mass)
@@ -303,7 +302,7 @@ func set_fast_time_enabled(enabled: bool) -> void:
 		angular_velocity = _stored_angular_velocity
 
 
-func enter_pilot(player: Node3D) -> void:
+func enter_pilot(player: Player) -> void:
 	if pilot != null:
 		return
 	pilot = player
@@ -311,8 +310,8 @@ func enter_pilot(player: Node3D) -> void:
 	player.set_piloting(true)
 	cockpit_cam.current = true
 	mouse_delta = Vector2.ZERO
-	var hud := get_tree().get_first_node_in_group("hud")
-	if hud:
+	var hud := get_tree().get_first_node_in_group("hud") as Hud
+	if hud != null:
 		hud.set_ship(self)
 
 
@@ -328,8 +327,8 @@ func exit_pilot() -> void:
 	pilot = null
 	_hatch_target = -1.15
 	_set_thrusters(false)
-	var hud := get_tree().get_first_node_in_group("hud")
-	if hud:
+	var hud := get_tree().get_first_node_in_group("hud") as Hud
+	if hud != null:
 		hud.set_ship(null)
 
 

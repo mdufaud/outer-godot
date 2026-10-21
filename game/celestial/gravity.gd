@@ -3,18 +3,18 @@ extends Node
 
 const INFLUENCE_FADE_START := 0.85
 
-var sources: Array = []
+var sources: Array[CelestialBody] = []
 
 var _center_cache := {}
 var _center_cache_frame := -1
 
 
-func register(source: Node3D) -> void:
+func register(source: CelestialBody) -> void:
 	if not sources.has(source):
 		sources.append(source)
 
 
-func unregister(source: Node3D) -> void:
+func unregister(source: CelestialBody) -> void:
 	sources.erase(source)
 
 
@@ -27,8 +27,8 @@ func get_gravity(pos: Vector3) -> Vector3:
 	return total
 
 
-func get_strongest(pos: Vector3) -> Node3D:
-	var best: Node3D = null
+func get_strongest(pos: Vector3) -> CelestialBody:
+	var best: CelestialBody = null
 	var best_magnitude := 0.0
 	for source in sources:
 		if not is_instance_valid(source):
@@ -41,23 +41,27 @@ func get_strongest(pos: Vector3) -> Node3D:
 	return best
 
 
-func get_nearest_surface(pos: Vector3) -> Node3D:
-	var best: Node3D = null
+func get_nearest_surface(pos: Vector3) -> PlanetBody:
+	var best: PlanetBody = null
 	var best_altitude := INF
 	for source in sources:
-		if not is_instance_valid(source) or not source.has_method("get_surface_radius_towards"):
+		if not is_instance_valid(source) or not source is PlanetBody:
 			continue
 		var direction: Vector3 = pos - source.global_position
 		if direction.length_squared() < 0.0001:
 			continue
-		if direction.length() > float(source.get("influence_radius")):
+		if direction.length() > source.influence_radius:
 			continue
-		var surface_radius: float = source.get_surface_radius_towards(direction.normalized())
-		var altitude: float = direction.length() - surface_radius
+		var altitude: float = direction.length() - source.get_surface_radius_towards(direction.normalized())
 		if altitude < best_altitude:
 			best_altitude = altitude
 			best = source
 	return best
+
+
+func get_reference_body(pos: Vector3) -> CelestialBody:
+	var surface := get_nearest_surface(pos)
+	return surface if surface != null else get_strongest(pos)
 
 
 func get_altitude(pos: Vector3) -> float:
@@ -67,10 +71,7 @@ func get_altitude(pos: Vector3) -> float:
 	var direction := pos - source.global_position
 	if direction.length_squared() < 0.0001:
 		return -1.0
-	var surface_radius := float(source.get("radius"))
-	if source.has_method("get_surface_radius_towards"):
-		surface_radius = source.get_surface_radius_towards(direction.normalized())
-	return direction.length() - surface_radius
+	return direction.length() - source.get_surface_radius_towards(direction.normalized())
 
 
 func get_relative_gravity(pos: Vector3, reference: Node3D) -> Vector3:
@@ -94,22 +95,20 @@ func get_gravity_at_body(source: Node3D) -> Vector3:
 	return value
 
 
-func get_gravity_from(source: Node3D, pos: Vector3) -> Vector3:
+func get_gravity_from(source: CelestialBody, pos: Vector3) -> Vector3:
 	if not is_instance_valid(source):
 		return Vector3.ZERO
 	return _gravity_from(source, pos)
 
 
-func _gravity_from(source: Node3D, pos: Vector3) -> Vector3:
+func _gravity_from(source: CelestialBody, pos: Vector3) -> Vector3:
 	var to_center := source.global_position - pos
 	var distance := to_center.length()
-	var influence := float(source.get("influence_radius"))
+	var influence := source.influence_radius
 	if distance < 0.01 or distance > influence:
 		return Vector3.ZERO
-	var radius := float(source.get("radius"))
-	if source.has_method("get_surface_radius_towards"):
-		radius = source.get_surface_radius_towards((pos - source.global_position).normalized())
-	var surface_gravity := float(source.get("surface_gravity"))
+	var radius := source.get_surface_radius_towards((pos - source.global_position).normalized())
+	var surface_gravity := source.surface_gravity
 	var magnitude := surface_gravity
 	if distance > radius:
 		magnitude = surface_gravity * radius * radius / (distance * distance)

@@ -1,4 +1,5 @@
-extends Node3D
+class_name Sun
+extends CelestialBody
 
 const SunFXScript := preload("res://game/sun/sun_fx.gd")
 const GravityServiceScript := preload("res://game/celestial/gravity.gd")
@@ -8,14 +9,16 @@ const CoronaShader := preload("res://game/sun/shaders/corona.gdshader")
 
 const BASE_EMISSION := 9.0
 
-@export var radius := 120.0
-@export var surface_gravity := 0.2
 @export var death_radius := 180.0
 
-var influence_radius := 2600.0
-var orbital_velocity := Vector3.ZERO
 var supernova: Supernova
 @onready var gravity_service: GravityService = get_node("/root/Gravity")
+
+
+func _init() -> void:
+	radius = 120.0
+	surface_gravity = 0.2
+	influence_radius = 2600.0
 
 
 func _ready() -> void:
@@ -86,16 +89,7 @@ func is_exploding() -> bool:
 	return supernova != null and supernova.is_active()
 
 
-func get_gravitational_parameter() -> float:
-	return surface_gravity * radius * radius
-
-
-func set_orbital_state(next_position: Vector3, next_velocity: Vector3) -> void:
-	global_position = next_position
-	orbital_velocity = next_velocity
-
-
 func _on_body_entered(_body: Node3D) -> void:
-	var main := get_tree().current_scene
-	if main and main.has_method("respawn"):
+	var main := get_tree().current_scene as Main
+	if main != null:
 		main.respawn()

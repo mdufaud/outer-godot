@@ -3,31 +3,31 @@ extends Node
 
 const PLAYER_SPAWN_CLEARANCE := 3.0
 
-var main: Node3D
+var main: Main
 
 
-func setup(next_main: Node3D) -> void:
+func setup(next_main: Main) -> void:
 	main = next_main
 
 
 func respawn() -> void:
-	var earth := main.get("earth") as PlanetBody
-	var sun := main.get("sun") as Node3D
-	var ship := main.get("ship") as RigidBody3D
+	var earth := main.earth
+	var sun := main.sun
+	var ship := main.ship
 	if earth == null or sun == null or ship == null:
 		return
 	var player_direction: Vector3 = earth.get_sunlit_spawn_direction(sun.global_position)
 	var spawn_direction: Vector3 = earth.get_nearby_land_direction(player_direction)
-	var earth_velocity: Vector3 = earth.get("orbital_velocity")
+	var earth_velocity := earth.orbital_velocity
 	var ship_spawn := Transform3D(Basis.IDENTITY, earth.get_landing_point(spawn_direction, 2.8))
 	ship.reset(ship_spawn, earth_velocity)
 	spawn_on_planet(earth)
 
 
 func spawn_on_planet(body: PlanetBody) -> bool:
-	var player := main.get("player") as CharacterBody3D
-	var ship := main.get("ship") as RigidBody3D
-	var sun := main.get("sun") as Node3D
+	var player := main.player
+	var ship := main.ship
+	var sun := main.sun
 	if body == null or player == null or sun == null:
 		return false
 	if ship != null and ship.pilot == player:
@@ -39,15 +39,9 @@ func spawn_on_planet(body: PlanetBody) -> bool:
 		x_axis = Vector3.RIGHT
 	x_axis = x_axis.normalized()
 	var basis := Basis(x_axis, direction, x_axis.cross(direction)).orthonormalized()
-	var body_velocity: Vector3 = body.get("orbital_velocity")
-	player.reset(Transform3D(basis, position_value), body_velocity)
-	var hud := get_tree().get_first_node_in_group("hud")
-	if hud != null and hud.has_method("set_selected_planet"):
+	player.reset(Transform3D(basis, position_value), body.orbital_velocity)
+	var hud := get_tree().get_first_node_in_group("hud") as Hud
+	if hud != null:
 		hud.set_selected_planet(body.body_id)
 	return true
 
-
-func spawn_on_planet_id(body_id: StringName) -> bool:
-	var bodies: Dictionary = main.get("_bodies_by_id")
-	var body := bodies.get(body_id) as PlanetBody
-	return spawn_on_planet(body) if body != null else false

@@ -1,3 +1,4 @@
+class_name Hud
 extends CanvasLayer
 
 const BonificationMathScript := preload("res://game/shared/bonification_math.gd")
@@ -17,8 +18,8 @@ class NavigationOverlay extends Control:
 		hud.draw_navigation(self)
 
 
-var ship: RigidBody3D = null
-var tracked_ship: RigidBody3D = null
+var ship: Ship = null
+var tracked_ship: Ship = null
 var prompt_label: Label
 var info_label: Label
 var hint_label: Label
@@ -35,14 +36,14 @@ var leviathan_button: Button
 var navigation_overlay: NavigationOverlay
 var globe: Control
 var planet_markers_visible := false
-var celestial_bodies: Array[Node3D] = []
+var celestial_bodies: Array[CelestialBody] = []
 var gravity_debug_visible := false
 var _dropdown_open := false
 var _gamepad_hints := false
 var _prompt_action := ""
 var _selected_planet_name := ""
-var locked_body: Node3D
-var aimed_body: Node3D
+var locked_body: CelestialBody
+var aimed_body: CelestialBody
 var ui_scale := 1.0
 @onready var gravity_service: GravityService = get_node("/root/Gravity")
 @onready var touch_service: TouchService = get_node("/root/Touch")
@@ -72,9 +73,11 @@ const GRAVITY_COLORS := [
 func _ready() -> void:
 	add_to_group("hud")
 	ui_scale = touch_service.ui_scale(get_viewport().get_visible_rect().size)
-	tracked_ship = get_parent().get("ship")
+	var main := get_parent() as Main
+	if main != null:
+		tracked_ship = main.ship
 	for body in get_tree().get_nodes_in_group("celestial_body"):
-		if body is Node3D:
+		if body is CelestialBody:
 			celestial_bodies.append(body)
 	_build_navigation_overlay()
 	_build_globe()
@@ -189,7 +192,7 @@ func _build_teleport_menu() -> void:
 	list.add_theme_constant_override("separation", _px(5))
 	planet_buttons.clear()
 	for body in celestial_bodies:
-		if not body.has_method("get_surface_radius_towards"):
+		if not body is PlanetBody:
 			continue
 		var planet_button := Button.new()
 		planet_button.name = "%sButton" % body.name.replace(" ", "")
@@ -283,36 +286,36 @@ func _on_gravity_debug_toggled(enabled: bool) -> void:
 func _on_orbit_fast_forward_toggled(enabled: bool) -> void:
 	if orbit_button != null:
 		orbit_button.text = "Fast time: ON" if enabled else "Fast time: OFF"
-	var celestial_system := get_tree().get_first_node_in_group("celestial_system")
+	var celestial_system := get_tree().get_first_node_in_group("celestial_system") as CelestialSystem
 	if celestial_system != null:
 		celestial_system.set_fast_forward_enabled(enabled)
 
 
 func _on_supernova_pressed() -> void:
-	var sun := get_tree().get_first_node_in_group("sun")
-	if sun != null and sun.has_method("detonate"):
+	var sun := get_tree().get_first_node_in_group("sun") as Sun
+	if sun != null:
 		sun.detonate()
 
 
 # Summons on the first press, sends it back on the second — but only while it is
 # still approaching. Once it starts eating there is no calling it off.
 func _on_leviathan_pressed() -> void:
-	var leviathan := get_tree().get_first_node_in_group("leviathan")
+	var leviathan := get_tree().get_first_node_in_group("leviathan") as Leviathan
 	if leviathan == null:
 		return
-	if bool(leviathan.call("is_active")):
-		leviathan.call("banish")
+	if leviathan.is_active():
+		leviathan.banish()
 	else:
-		leviathan.call("summon")
+		leviathan.summon()
 	_refresh_leviathan_button()
 
 
 func _refresh_leviathan_button() -> void:
 	if leviathan_button == null:
 		return
-	var leviathan := get_tree().get_first_node_in_group("leviathan")
-	var active := leviathan != null and bool(leviathan.call("is_active"))
-	var devouring := leviathan != null and bool(leviathan.call("is_devouring"))
+	var leviathan := get_tree().get_first_node_in_group("leviathan") as Leviathan
+	var active := leviathan != null and leviathan.is_active()
+	var devouring := leviathan != null and leviathan.is_devouring()
 	leviathan_button.text = "Feeding" if devouring else ("Banish" if active else "Leviathan")
 	leviathan_button.disabled = devouring
 
@@ -365,8 +368,8 @@ func layout_panels() -> void:
 # Keep panels from growing under the on-screen touch controls.
 func _panel_bottom_limit(viewport_size: Vector2, margin: float) -> float:
 	var limit := viewport_size.y - margin
-	var touch_hud := get_tree().get_first_node_in_group("touch_hud")
-	if touch_hud != null and touch_hud.has_method("controls_top"):
+	var touch_hud := get_tree().get_first_node_in_group("touch_hud") as TouchHud
+	if touch_hud != null:
 		limit = minf(limit, touch_hud.controls_top() - margin)
 	return limit
 
@@ -392,8 +395,8 @@ func _input(event: InputEvent) -> void:
 
 
 func _on_planet_selected(body_name: StringName) -> void:
-	var main := get_parent()
-	if main.has_method("spawn_on_planet_id"):
+	var main := get_parent() as Main
+	if main != null:
 		main.spawn_on_planet_id(body_name)
 	set_selected_planet(body_name)
 	_dropdown_open = true
@@ -574,11 +577,11 @@ func _draw_gravity_debug(canvas: Control, camera: Camera3D) -> void:
 		canvas.draw_string(ThemeDB.fallback_font, end + Vector2(9.0, -7.0) * ui_scale, text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, _px(12), color)
 
 
-func _draw_target(canvas: Control, camera: Camera3D, body: Node3D, locked: bool) -> void:
+func _draw_target(canvas: Control, camera: Camera3D, body: CelestialBody, locked: bool) -> void:
 	if camera.is_position_behind(body.global_position):
 		return
 	var center := camera.unproject_position(body.global_position)
-	var radius := float(body.get("radius"))
+	var radius := body.radius
 	var edge := camera.unproject_position(body.global_position + camera.global_basis.x * radius)
 	var ring_radius := clampf(center.distance_to(edge) * (1.12 if locked else 1.06), 13.0 * ui_scale, 260.0 * ui_scale)
 	var color := TARGET_COLOR if locked else AIM_COLOR
@@ -586,11 +589,9 @@ func _draw_target(canvas: Control, camera: Camera3D, body: Node3D, locked: bool)
 	if ship == null:
 		return
 	var direction := (body.global_position - camera.global_position).normalized()
-	var surface_radius := radius
-	if body.has_method("get_surface_radius_towards"):
-		surface_radius = float(body.get_surface_radius_towards(-direction))
+	var surface_radius := body.get_surface_radius_towards(-direction)
 	var surface_distance := maxf(camera.global_position.distance_to(body.global_position) - surface_radius, 0.0)
-	var relative := relative_velocity_components(ship.linear_velocity, body.get("orbital_velocity"), direction, camera.global_basis.y, camera.global_basis.x)
+	var relative := relative_velocity_components(ship.linear_velocity, body.orbital_velocity, direction, camera.global_basis.y, camera.global_basis.x)
 	var target_state := "LOCKED" if locked else "TARGET"
 	var label := "%s  %s\nSurface %s\nApproach %+.1f m/s" % [body.name, target_state, _format_distance(surface_distance), relative.z]
 	canvas.draw_multiline_string(ThemeDB.fallback_font, center + Vector2(ring_radius + 12.0 * ui_scale, -8.0 * ui_scale), label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, _px(14), -1, color)
@@ -617,14 +618,14 @@ static func ray_sphere_distance(center: Vector3, radius: float, origin: Vector3,
 	return BonificationMathScript.ray_sphere_distance(center, radius, origin, direction)
 
 
-static func find_aimed_body(camera: Camera3D, bodies: Array[Node3D]) -> Node3D:
-	var best: Node3D
+static func find_aimed_body(camera: Camera3D, bodies: Array[CelestialBody]) -> CelestialBody:
+	var best: CelestialBody
 	var nearest := INF
 	var direction := -camera.global_basis.z
 	for body in bodies:
 		if not is_instance_valid(body):
 			continue
-		var hit := ray_sphere_distance(body.global_position, float(body.get("radius")), camera.global_position, direction)
+		var hit := ray_sphere_distance(body.global_position, body.radius, camera.global_position, direction)
 		if hit < nearest:
 			nearest = hit
 			best = body
@@ -644,7 +645,7 @@ static func find_aimed_body(camera: Camera3D, bodies: Array[Node3D]) -> Node3D:
 	return best
 
 
-func _has_active_gravity(body: Node3D, observer_position: Vector3) -> bool:
+func _has_active_gravity(body: CelestialBody, observer_position: Vector3) -> bool:
 	return gravity_service.get_gravity_from(body, observer_position).length_squared() > 0.0
 
 

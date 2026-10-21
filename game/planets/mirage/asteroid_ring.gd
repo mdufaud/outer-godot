@@ -1,3 +1,4 @@
+class_name AsteroidRing
 extends Node3D
 
 const PlanetHeightGeneratorScript := preload("res://game/planets/shared/planet_generator.gd")
@@ -34,9 +35,9 @@ func _ready() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 20873
 	var parent_mu := 0.0
-	var parent := get_parent()
-	if parent != null and parent.has_method("get_gravitational_parameter"):
-		parent_mu = float(parent.call("get_gravitational_parameter"))
+	var parent := get_parent() as CelestialBody
+	if parent != null:
+		parent_mu = parent.get_gravitational_parameter()
 	for band_index in BANDS:
 		var span := (OUTER_RADIUS - INNER_RADIUS) / float(BANDS)
 		var band_inner := INNER_RADIUS + span * float(band_index)

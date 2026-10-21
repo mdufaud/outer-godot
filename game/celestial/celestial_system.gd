@@ -1,3 +1,4 @@
+class_name CelestialSystem
 extends Node
 
 const CelestialEntryScript := preload("res://game/celestial/celestial_entry.gd")
@@ -7,7 +8,7 @@ const MAX_SUBSTEP := 1.0 / 120.0
 const MIN_SEPARATION := 0.01
 const PERTURBATION_SCALE := 0.1
 
-var bodies: Array = []
+var bodies: Array[CelestialBody] = []
 var entries: Array[CelestialEntry] = []
 var _body_by_id: Dictionary = {}
 var _orbit_parents: Dictionary = {}
@@ -16,7 +17,7 @@ var _positions := PackedFloat64Array()
 var _velocities := PackedFloat64Array()
 var _pair_mu: Array[PackedFloat64Array] = []
 var _entry_of_body: Array[int] = []
-var _binary_bodies: Array[Node3D] = []
+var _binary_bodies: Array[CelestialBody] = []
 var _binary_entry := -1
 var _binary_offsets: Array[Vector3] = []
 var _binary_angular_speed := 0.0
@@ -24,7 +25,7 @@ var _binary_angle := 0.0
 var _time_multiplier := 1.0
 
 
-func configure(next_entries: Array[CelestialEntry], next_bodies: Dictionary, sun: Node3D) -> void:
+func configure(next_entries: Array[CelestialEntry], next_bodies: Dictionary, sun: CelestialBody) -> void:
 	entries = next_entries
 	_body_by_id = next_bodies.duplicate()
 	_body_by_id[&"sun"] = sun
@@ -47,14 +48,14 @@ func _initialize_simulation() -> void:
 	_binary_bodies.clear()
 	_binary_entry = -1
 
-	var sun: Node3D = _body_by_id.get(&"sun")
+	var sun: CelestialBody = _body_by_id.get(&"sun")
 	if sun != null:
 		bodies.append(sun)
 		_sim_ids.append(&"sun")
 
 	var binary_groups: Dictionary = {}
 	for entry in entries:
-		var body: Node3D = _body_by_id.get(entry.body_id)
+		var body: CelestialBody = _body_by_id.get(entry.body_id)
 		if body == null:
 			continue
 		if entry.binary_group_id.is_empty():
@@ -70,11 +71,11 @@ func _initialize_simulation() -> void:
 		var group: Array = binary_groups[group_id]
 		if group.size() != 2:
 			continue
-		var first: Node3D = group[0].body
-		var second: Node3D = group[1].body
+		var first: CelestialBody = group[0].body
+		var second: CelestialBody = group[1].body
 		_binary_bodies = [first, second]
-		var first_mu := float(first.call("get_gravitational_parameter"))
-		var second_mu := float(second.call("get_gravitational_parameter"))
+		var first_mu := first.get_gravitational_parameter()
+		var second_mu := second.get_gravitational_parameter()
 		var total_mu := first_mu + second_mu
 		var barycenter := (first.global_position * first_mu + second.global_position * second_mu) / total_mu
 		var separation := first.global_position.distance_to(second.global_position)
@@ -94,24 +95,24 @@ func _initialize_simulation() -> void:
 	for sim_id in _sim_ids:
 		if sim_id == &"sun":
 			positions.append(Vector3.ZERO)
-			mu.append(float(sun.call("get_gravitational_parameter")))
+			mu.append(sun.get_gravitational_parameter())
 		elif _binary_entry == _sim_ids.find(sim_id):
 			var binary_mu := 0.0
 			for binary_body in _binary_bodies:
-				binary_mu += float(binary_body.call("get_gravitational_parameter"))
-			positions.append((_binary_bodies[0].global_position * float(_binary_bodies[0].call("get_gravitational_parameter")) + _binary_bodies[1].global_position * float(_binary_bodies[1].call("get_gravitational_parameter"))) / binary_mu)
+				binary_mu += binary_body.get_gravitational_parameter()
+			positions.append((_binary_bodies[0].global_position * _binary_bodies[0].get_gravitational_parameter() + _binary_bodies[1].global_position * _binary_bodies[1].get_gravitational_parameter()) / binary_mu)
 			mu.append(binary_mu)
 		else:
-			var body: Node3D = _body_by_id.get(_entry_id_from_sim_id(sim_id))
+			var body: CelestialBody = _body_by_id.get(_entry_id_from_sim_id(sim_id))
 			positions.append(body.global_position)
-			mu.append(float(body.call("get_gravitational_parameter")))
+			mu.append(body.get_gravitational_parameter())
 	_positions = pack_state(positions)
 	_velocities = pack_state(compute_initial_velocities(_sim_ids, positions, mu, _orbit_parents))
 	_pair_mu = build_pair_mu(_sim_ids, mu, _orbit_parents)
 	_publish_states()
 
 
-func _body_entry(body: Node3D) -> int:
+func _body_entry(body: CelestialBody) -> int:
 	if body == _body_by_id.get(&"sun"):
 		return _sim_ids.find(&"sun")
 	for entry in entries:

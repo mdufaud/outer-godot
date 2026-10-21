@@ -78,7 +78,7 @@ var _storm_flash := 0.0
 var _storm_timer := 0.0
 var _storm_rng := RandomNumberGenerator.new()
 var _blackout: ColorRect
-var _roar: Node
+var _roar: LeviathanRoar
 var _camera_far := {}
 var _direction := APPROACH_DIRECTION.normalized()
 var _up_hint := Vector3.UP
@@ -198,7 +198,7 @@ func summon() -> void:
 	_roar_timer = ROAR_INTERVAL * 0.5
 	_visual.visible = true
 	var camera := get_viewport().get_camera_3d()
-	var sun := get_tree().get_first_node_in_group("sun") as Node3D
+	var sun := get_tree().get_first_node_in_group("sun") as Sun
 	if camera != null and sun != null:
 		_direction = spawn_direction(camera.global_position, sun.global_position)
 	if camera != null:
@@ -206,7 +206,7 @@ func summon() -> void:
 		# whole creature with the player's aim, which read as the body being
 		# dragged around by the cursor.
 		_up_hint = camera.global_basis.y
-	_roar.call("roar")
+	_roar.roar()
 
 
 # The body always sits at START_DISTANCE from the sun, and the dive ends at the
@@ -237,7 +237,7 @@ func is_devouring() -> bool:
 
 
 func get_dread_factor() -> float:
-	return float(_roar.call("get_dread_factor")) if _roar != null else 0.0
+	return _roar.get_dread_factor() if _roar != null else 0.0
 
 
 static func presence_at(elapsed: float) -> float:
@@ -285,7 +285,7 @@ func _process(delta: float) -> void:
 	var camera := get_viewport().get_camera_3d()
 	if camera != null:
 		_extend_camera_far(camera)
-	var sun := get_tree().get_first_node_in_group("sun") as Node3D
+	var sun := get_tree().get_first_node_in_group("sun") as Sun
 	if sun == null:
 		return
 
@@ -295,7 +295,7 @@ func _process(delta: float) -> void:
 	_body_material.set_shader_parameter("presence", presence)
 	_update_rig(presence, maw_open)
 	_update_storm(delta, maw_open)
-	_roar.call("set_dread", presence)
+	_roar.set_dread(presence)
 	if _state == STATE_FADE_IN and _elapsed > FADE_IN_DURATION:
 		_state = STATE_APPROACH
 
@@ -307,14 +307,14 @@ func _process(delta: float) -> void:
 	_devour(sun)
 	# Whichever the throat closes on first ends the run: the player is on the
 	# dive line, the sun is at the end of it.
-	if _throat_holds(sun.global_position, _body_radius(sun)) or _player_eaten(camera):
+	if _throat_holds(sun.global_position, sun.radius) or _player_eaten(camera):
 		_start_blackout()
 		return
 
 	_roar_timer -= delta
 	if _roar_timer <= 0.0:
 		_roar_timer = ROAR_INTERVAL
-		_roar.call("roar")
+		_roar.roar()
 	if camera != null:
 		var closeness := clampf(1.0 - distance / START_DISTANCE, 0.0, 1.0)
 		_shake(pow(closeness, 3.0) * 0.05)
@@ -327,7 +327,7 @@ func _update_storm(delta: float, maw_open: float) -> void:
 		if _storm_timer <= 0.0:
 			_storm_flash = _storm_rng.randf_range(0.72, 1.0)
 			_storm_timer = _storm_rng.randf_range(0.45, 1.6)
-			_roar.call("thunder", _storm_flash)
+			_roar.thunder(_storm_flash)
 	else:
 		_storm_timer = 0.0
 	# The vortex only exists once there is a mouth to see it through.
@@ -379,38 +379,31 @@ func _player_eaten(camera: Camera3D) -> bool:
 	return camera != null and _throat_holds(camera.global_position, 0.0)
 
 
-# Not every member of the group carries one: the ring debris has no radius, and
-# a missing one only means the body is eaten when its centre crosses the fangs.
-func _body_radius(body: Node3D) -> float:
-	var value: Variant = body.get("radius")
-	return float(value) if value is float or value is int else 0.0
-
-
-func _devour(sun: Node3D) -> void:
-	var main := get_tree().current_scene
+func _devour(sun: Sun) -> void:
+	var main := get_tree().current_scene as Main
 	for node in get_tree().get_nodes_in_group("celestial_body"):
-		var body := node as Node3D
+		var body := node as CelestialBody
 		if body == null or body == sun or not is_instance_valid(body):
 			continue
-		if not _throat_holds(body.global_position, _body_radius(body)):
+		if not _throat_holds(body.global_position, body.radius):
 			continue
-		if main != null and main.has_method("forget_body"):
+		if main != null:
 			main.forget_body(body)
 		body.queue_free()
-		_roar.call("roar")
+		_roar.roar()
 		_shake(0.09)
 
 
 func _start_blackout() -> void:
 	_state = STATE_BLACKOUT
 	_blackout_elapsed = 0.0
-	_roar.call("roar")
+	_roar.roar()
 
 
 func _update_blackout(delta: float) -> void:
 	_blackout_elapsed += delta
 	_elapsed += delta
-	var sun := get_tree().get_first_node_in_group("sun") as Node3D
+	var sun := get_tree().get_first_node_in_group("sun") as Sun
 	if sun != null:
 		var camera := get_viewport().get_camera_3d()
 		if camera != null:
@@ -424,7 +417,7 @@ func _update_blackout(delta: float) -> void:
 		var maw_position := sun.global_position + _direction * distance
 		_place_body(maw_position, maw_position - _direction * BODY_LENGTH, _up_hint)
 	_blackout.color.a = clampf(_blackout_elapsed / BLACKOUT_DURATION, 0.0, 1.0)
-	_roar.call("set_dread", 1.0)
+	_roar.set_dread(1.0)
 	if _blackout_elapsed >= BLACKOUT_DURATION:
 		_visual.visible = false
 		_storm.visible = false
@@ -449,15 +442,15 @@ func _reset_state() -> void:
 	_storm_light.light_energy = 0.0
 	_storm_flash = 0.0
 	_storm_timer = 0.0
-	_roar.call("stop")
+	_roar.stop()
 	_restore_cameras()
 
 
 func _shake(strength: float) -> void:
 	if strength <= 0.0:
 		return
-	var main := get_tree().current_scene
-	if main != null and main.has_method("trigger_camera_shake"):
+	var main := get_tree().current_scene as Main
+	if main != null:
 		main.trigger_camera_shake(strength, 0.25)
 
 

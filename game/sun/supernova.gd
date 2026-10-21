@@ -128,8 +128,8 @@ func _process(delta: float) -> void:
 	var distance := camera.global_position.distance_to(global_position)
 	_shake(maxf(clampf(1.0 - (distance - radius) / 2500.0, 0.0, 1.0) * 0.05, ignition * 0.18))
 	if has_contact(camera.global_position, global_position, radius):
-		var main := get_tree().current_scene
-		if main != null and main.has_method("respawn"):
+		var main := get_tree().current_scene as Main
+		if main != null:
 			main.respawn()
 		reset_state()
 
@@ -177,8 +177,8 @@ func _set_sun_emission(value: float) -> void:
 func _shake(strength: float) -> void:
 	if strength <= 0.0:
 		return
-	var main := get_tree().current_scene
-	if main != null and main.has_method("trigger_camera_shake"):
+	var main := get_tree().current_scene as Main
+	if main != null:
 		main.trigger_camera_shake(strength, 0.2)
 
 

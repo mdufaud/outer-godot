@@ -1,3 +1,4 @@
+class_name CometTrail
 extends Node3D
 
 # Interloper style plume: a raymarched volume box welded to the body, +Z pointing
@@ -20,7 +21,7 @@ const VELOCITY_BEND := 0.22
 const DESKTOP_STEPS := 32
 const TOUCH_STEPS := 18
 
-var target: Node3D
+var target: CelestialBody
 var sun: Node3D
 
 var _material := ShaderMaterial.new()
@@ -29,7 +30,7 @@ var _head_offset := 0.0
 
 
 func _ready() -> void:
-	var radius := float(target.get("radius")) if target != null and target.get("radius") != null else 20.0
+	var radius := target.radius if target != null else 20.0
 	var length := radius * LENGTH_SCALE
 	var tail_radius := radius * TAIL_RADIUS_SCALE
 	var back_margin := radius * BACK_MARGIN_SCALE

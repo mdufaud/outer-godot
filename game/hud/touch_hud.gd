@@ -1,7 +1,8 @@
+class_name TouchHud
 extends Control
 
 const TouchServiceScript := preload("res://game/input/touch.gd")
-var main: Node3D
+var main: Main
 
 const BW := 78.0
 const BH := 78.0
@@ -84,8 +85,8 @@ func _rebuild() -> void:
 # The button block changes height between walk and pilot mode, so the panels above
 # it have to be re-fitted around the new free space.
 func _notify_hud_layout() -> void:
-	var hud := get_tree().get_first_node_in_group("hud")
-	if hud != null and hud.has_method("layout_panels"):
+	var hud := get_tree().get_first_node_in_group("hud") as Hud
+	if hud != null:
 		hud.layout_panels()
 
 
@@ -126,8 +127,8 @@ func _input(event: InputEvent) -> void:
 
 
 func _on_press(index: int, pos: Vector2) -> void:
-	var hud := get_tree().get_first_node_in_group("hud")
-	if hud != null and hud.has_method("is_touch_over_ui") and hud.is_touch_over_ui(pos):
+	var hud := get_tree().get_first_node_in_group("hud") as Hud
+	if hud != null and hud.is_touch_over_ui(pos):
 		return
 	for b in _buttons:
 		if _btn_hit_rect(b).has_point(pos):

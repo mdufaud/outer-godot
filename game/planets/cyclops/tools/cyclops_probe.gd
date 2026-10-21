@@ -7,11 +7,11 @@ func _initialize() -> void:
 	change_scene_to_file("res://game/bootstrap/main.tscn")
 	await process_frame
 	await process_frame
-	var root_node := current_scene
+	var root_node := current_scene as Main
 	# The screen overlays only exist once main.gd finishes booting, so waiting a fixed frame count
 	# captures a frame with no cloud tint at all.
 	var boot_frames := 0
-	while not bool(root_node.get("_loaded")):
+	while not root_node.is_loaded():
 		await process_frame
 		boot_frames += 1
 		if boot_frames > 6000:
@@ -20,13 +20,13 @@ func _initialize() -> void:
 			return
 	for wait_frame in 30:
 		await process_frame
-	var cyclops: Node3D = root_node.find_child("Cyclops", true, false)
+	var cyclops := root_node.get_body(&"Cyclops")
 	if cyclops == null:
 		printerr("Cyclops not found")
 		quit(1)
 		return
-	var sea_level: float = float(cyclops.call("sea_level"))
-	var deck_gap: float = float(cyclops.call("get_weather_deck_gap"))
+	var sea_level := cyclops.sea_level()
+	var deck_gap := cyclops.get_weather_deck_gap()
 	var camera := Camera3D.new()
 	camera.far = 20000.0
 	root_node.add_child(camera)
@@ -36,8 +36,8 @@ func _initialize() -> void:
 	var camera_radius := sea_level + deck_gap * altitude_fraction
 	print("sea %.2f deck %.2f..%.2f camera %.2f" % [
 		sea_level,
-		float(cyclops.call("get_weather_deck_inner_radius")),
-		float(cyclops.call("get_weather_deck_outer_radius")),
+		cyclops.get_weather_deck_inner_radius(),
+		cyclops.get_weather_deck_outer_radius(),
 		camera_radius,
 	])
 	var up_direction := Vector3.UP
@@ -58,9 +58,9 @@ func _initialize() -> void:
 			camera.look_at_from_position(origin, origin + side * 4.0 + up_direction * pitch, up_direction)
 		await process_frame
 	print("tint %.4f occlusion %.4f overlay %s" % [
-		float(cyclops.call("get_weather_cloud_transition", camera.global_position)),
-		float(cyclops.call("get_weather_sky_occlusion", camera.global_position)),
-		str((root_node.get("_transition_tint") as ColorRect).visible if root_node.get("_transition_tint") != null else "missing"),
+		cyclops.get_weather_cloud_transition(camera.global_position),
+		cyclops.get_weather_sky_occlusion(camera.global_position),
+		str(root_node._transition_tint.visible if root_node._transition_tint != null else "missing"),
 	])
 	await RenderingServer.frame_post_draw
 	var image := get_root().get_texture().get_image()

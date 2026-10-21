@@ -1,3 +1,4 @@
+class_name PlanetEffects
 extends CompositorEffect
 
 # Ordered post-process chain for planetary oceans and atmospheres.
@@ -58,10 +59,11 @@ func _init() -> void:
 
 # Mirrors SebLague PlanetEffects.GetMaterials: bodies far to near.
 func update_from_bodies(camera_position: Vector3, candidates: Array) -> void:
-	var bodies: Array = []
+	var bodies: Array[PlanetBody] = []
 	var camera: Camera3D
-	for body in candidates:
-		if body.has_method("get_ocean_effect_params") and body.visible:
+	for candidate in candidates:
+		var body := candidate as PlanetBody
+		if body != null and body.visible:
 			bodies.append(body)
 			if camera == null:
 				camera = body.get_viewport().get_camera_3d()
@@ -121,8 +123,8 @@ func clear() -> void:
 	_mutex.unlock()
 
 
-func _sort_distance(body: Node3D, camera_position: Vector3) -> float:
-	return maxf(0.0, body.global_position.distance_to(camera_position) - float(body.get("radius")))
+func _sort_distance(body: PlanetBody, camera_position: Vector3) -> float:
+	return maxf(0.0, body.global_position.distance_to(camera_position) - body.radius)
 
 
 func _sphere_intersects_frustum(centre: Vector3, radius: float, frustum: Array[Plane]) -> bool:

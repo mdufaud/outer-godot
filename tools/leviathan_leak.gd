@@ -13,7 +13,7 @@ extends SceneTree
 const STEP := 0.25
 const END := 42.0
 
-var _leviathan: Node
+var _leviathan: Leviathan
 
 
 func _init() -> void:
@@ -24,7 +24,7 @@ func _start() -> void:
 	change_scene_to_file("res://game/bootstrap/main.tscn")
 	for attempt in 900:
 		await process_frame
-		_leviathan = get_first_node_in_group("leviathan")
+		_leviathan = get_first_node_in_group("leviathan") as Leviathan
 		if _leviathan != null:
 			break
 	if _leviathan == null:
@@ -35,12 +35,12 @@ func _start() -> void:
 		await process_frame
 	var before := get_nodes_in_group("celestial_body").size()
 	_leviathan.process_mode = Node.PROCESS_MODE_DISABLED
-	_leviathan.call("summon")
+	_leviathan.summon()
 	var clock := 0.0
 	# The blackout restarts the world, which takes the creature with it, so the
 	# loop has to survive its own driver disappearing.
 	while clock < END and is_instance_valid(_leviathan):
-		_leviathan.call("_process", STEP)
+		_leviathan._process(STEP)
 		clock += STEP
 		await process_frame
 	# The blackout reloads the world. Quitting while that boot is still running

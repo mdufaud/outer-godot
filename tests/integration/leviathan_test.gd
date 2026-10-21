@@ -9,7 +9,7 @@ const MIRAGE_DISTANCE := 1487.5
 var failures: Array[String] = []
 
 class SilentRoar:
-	extends Node
+	extends LeviathanRoar
 
 	func roar() -> void:
 		pass
@@ -18,6 +18,17 @@ class SilentRoar:
 		pass
 
 	func thunder(_intensity: float = 1.0) -> void:
+		pass
+
+
+# A sun that only holds a position: the real one builds meshes and joins the Gravity autoload.
+class InertSun:
+	extends Sun
+
+	func _ready() -> void:
+		add_to_group("sun")
+
+	func _exit_tree() -> void:
 		pass
 
 
@@ -200,8 +211,7 @@ func _test_visual_contract() -> void:
 func _test_blackout_keeps_leviathan_visible() -> void:
 	var leviathan := LeviathanScript.new()
 	root.add_child(leviathan)
-	var sun := Node3D.new()
-	sun.add_to_group("sun")
+	var sun := InertSun.new()
 	root.add_child(sun)
 	var original_roar: Node = leviathan._roar
 	leviathan._roar = SilentRoar.new()

@@ -1,3 +1,4 @@
+class_name FloatingOrigin
 extends Node
 
 const SHIFT_THRESHOLD := 1000.0

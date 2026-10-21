@@ -1,3 +1,4 @@
+class_name Player
 extends CharacterBody3D
 
 const PlanetBodyScript := preload("res://game/planets/shared/planet_body.gd")
@@ -30,10 +31,10 @@ const FREE_LOOK_ROLL_SPEED := 1.8
 
 var up_dir := Vector3.UP
 var piloting := false
-var frame_source: Node3D = null
+var frame_source: CelestialBody = null
 var frame_velocity := Vector3.ZERO
 var frame_position := Vector3.ZERO
-var celestial_system: Node = null
+var celestial_system: CelestialSystem = null
 var _fast_time_enabled := false
 var _fast_time_on_surface := false
 var _stored_velocity := Vector3.ZERO
@@ -58,7 +59,7 @@ func _ready() -> void:
 	platform_on_leave = CharacterBody3D.PLATFORM_ON_LEAVE_DO_NOTHING
 	platform_floor_layers = 0
 	platform_wall_layers = 0
-	celestial_system = get_tree().get_first_node_in_group("celestial_system")
+	celestial_system = get_tree().get_first_node_in_group("celestial_system") as CelestialSystem
 	if celestial_system != null:
 		set_fast_time_enabled(celestial_system.is_fast_forward_enabled())
 	if not touch_service.is_touch_ui():
@@ -75,8 +76,8 @@ func _capture_mouse_when_focused() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and not touch_service.is_touch_ui() and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
-		var hud := get_tree().get_first_node_in_group("hud")
-		if hud != null and hud.has_method("is_mouse_over_ui") and hud.is_mouse_over_ui(event.position):
+		var hud := get_tree().get_first_node_in_group("hud") as Hud
+		if hud != null and hud.is_mouse_over_ui(event.position):
 			get_viewport().set_input_as_handled()
 			return
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
@@ -116,9 +117,9 @@ func _set_free_look(enabled: bool) -> void:
 
 
 func _try_interact() -> void:
-	var target := ray.get_collider()
-	if target and target.has_method("interact"):
-		target.interact(self)
+	var seat := ray.get_collider() as Seat
+	if seat != null:
+		seat.interact(self)
 
 
 func _physics_process(delta: float) -> void:
@@ -138,13 +139,13 @@ func _physics_process(delta: float) -> void:
 		return
 	var gravity := gravity_service.get_gravity(global_position)
 	var surface_source := gravity_service.get_nearest_surface(global_position)
-	var reference_source := surface_source
+	var reference_source: CelestialBody = surface_source
 	if reference_source == null:
 		reference_source = gravity_service.get_strongest(global_position)
 	var reference_velocity := Vector3.ZERO
 	var relative_gravity := gravity
 	if reference_source != null:
-		reference_velocity = reference_source.get("orbital_velocity")
+		reference_velocity = reference_source.orbital_velocity
 		relative_gravity = gravity - gravity_service.get_gravity_at_body(reference_source)
 	if surface_source != null and relative_gravity.length_squared() > 0.0001:
 		up_dir = -relative_gravity.normalized()
@@ -153,7 +154,7 @@ func _physics_process(delta: float) -> void:
 	# with instead of being snapped the moment they cross an influence sphere.
 	var align_rate := 0.0
 	if surface_source != null:
-		var fade_span := maxf(float(surface_source.get("radius")) * ALIGN_FADE_ALTITUDE, 1.0)
+		var fade_span := maxf(surface_source.radius * ALIGN_FADE_ALTITUDE, 1.0)
 		var altitude_ratio := clampf(_ground_clearance(surface_source) / fade_span, 0.0, 1.0)
 		align_rate = ALIGN_SPEED_GROUND * (1.0 - smoothstep(0.15, 1.0, altitude_ratio))
 	_set_free_look(align_rate <= 0.0)
@@ -184,7 +185,7 @@ func _physics_process(delta: float) -> void:
 	var relative_velocity := velocity - previous_frame_velocity
 	var vertical_speed := relative_velocity.dot(up_dir)
 	var environment_force := Vector3.ZERO
-	if reference_source != null and reference_source.has_method("get_environment_force"):
+	if reference_source != null:
 		environment_force = reference_source.get_environment_force(global_position)
 	var environment_lift := environment_force.dot(up_dir)
 	var grounded := is_on_floor()
@@ -195,7 +196,7 @@ func _physics_process(delta: float) -> void:
 	if environment_lift > relative_gravity.length():
 		grounded = false
 	var water_depth := -INF
-	if reference_source != null and reference_source.has_method("get_water_depth"):
+	if reference_source != null:
 		water_depth = reference_source.get_water_depth(global_position)
 	var swimming := water_depth > 0.2
 	var movement_basis := global_basis if grounded and not swimming else camera.global_basis
@@ -271,7 +272,7 @@ func set_fast_time_enabled(enabled: bool) -> void:
 		_fast_time_on_surface = surface_source != null and _ground_clearance(surface_source) <= GROUND_PROBE_DISTANCE
 		if _fast_time_on_surface:
 			frame_source = surface_source
-			frame_velocity = surface_source.get("orbital_velocity")
+			frame_velocity = surface_source.orbital_velocity
 			frame_position = surface_source.global_position
 		else:
 			velocity = Vector3.ZERO
@@ -299,10 +300,10 @@ func _align_to_up(delta: float, rate: float) -> void:
 	global_basis = global_basis.slerp(target, clampf(rate * delta, 0.0, 1.0)).orthonormalized()
 
 
-func _atmosphere_density(source: Node3D) -> float:
-	if source == null or not bool(source.get("has_atmosphere")):
+func _atmosphere_density(source: PlanetBody) -> float:
+	if source == null or not source.has_atmosphere:
 		return 0.0
-	var thickness := float(source.get("radius")) * float(source.get("atmosphere_scale"))
+	var thickness := source.radius * source.atmosphere_scale
 	if thickness <= 0.0:
 		return 0.0
 	return clampf(1.0 - _ground_clearance(source) / thickness, 0.0, 1.0)
@@ -341,14 +342,12 @@ func ensure_surface_clearance(clearance := GROUND_COLLISION_MARGIN) -> void:
 		_place_above_surface(source, clearance)
 
 
-func _surface_radius(source: Node3D, direction: Vector3) -> float:
-	if source.has_method("get_collider_surface_radius"):
-		return source.get_collider_surface_radius(direction)
-	return source.get_surface_radius_towards(direction)
+func _surface_radius(source: PlanetBody, direction: Vector3) -> float:
+	return source.get_collider_surface_radius(direction)
 
 
-func _ground_clearance(source: Node3D) -> float:
-	if source == null or not source.has_method("get_surface_radius_towards"):
+func _ground_clearance(source: PlanetBody) -> float:
+	if source == null:
 		return INF
 	var direction := global_position - source.global_position
 	if direction.length_squared() < 0.0001:
@@ -356,8 +355,8 @@ func _ground_clearance(source: Node3D) -> float:
 	return direction.length() - _surface_radius(source, direction.normalized()) - PLAYER_HALF_HEIGHT
 
 
-func _place_above_surface(source: Node3D, clearance := GROUND_COLLISION_MARGIN) -> void:
-	if source == null or not source.has_method("get_surface_radius_towards"):
+func _place_above_surface(source: PlanetBody, clearance := GROUND_COLLISION_MARGIN) -> void:
+	if source == null:
 		return
 	var direction := global_position - source.global_position
 	if direction.length_squared() < 0.0001:
@@ -368,11 +367,11 @@ func _place_above_surface(source: Node3D, clearance := GROUND_COLLISION_MARGIN) 
 
 
 func _update_prompt() -> void:
-	var hud := get_tree().get_first_node_in_group("hud")
+	var hud := get_tree().get_first_node_in_group("hud") as Hud
 	if hud == null:
 		return
-	var target := ray.get_collider()
-	if not piloting and target and target.has_method("interact"):
-		hud.set_prompt(target.prompt_text)
+	var seat := ray.get_collider() as Seat
+	if not piloting and seat != null:
+		hud.set_prompt(seat.prompt_text)
 	else:
 		hud.set_prompt("")

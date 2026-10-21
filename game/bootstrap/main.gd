@@ -1,3 +1,4 @@
+class_name Main
 extends Node3D
 
 const SHIP_SCENE := preload("res://game/ship/ship.tscn")
@@ -30,11 +31,11 @@ const SUN_GLOW_FADE_FAR_RADII := 24.0
 const BOOT_STALL_WARNING_MS := 10000
 const BOOT_TIMEOUT_MS := 180000
 
-var player: CharacterBody3D
-var ship: RigidBody3D
+var player: Player
+var ship: Ship
 var earth: PlanetBody
 var moon: PlanetBody
-var sun: Node3D
+var sun: Sun
 var sun_light: DirectionalLight3D
 var fill_light: DirectionalLight3D
 var _loading_screen: LoadingScreen
@@ -42,10 +43,10 @@ var _feedback_root: Control
 var _underwater_strength := 0.0
 var _sky_material: ShaderMaterial
 var _environment_controller: EnvironmentController
-var _camera_shake: Node
+var _camera_shake: CameraShake
 var _ocean_audio: AudioStreamPlayer
 var _wind_audio: AudioStreamPlayer
-var _dread_pulse: Node
+var _leviathan: Leviathan
 var _was_underwater := false
 var _was_in_atmosphere := false
 var _feedback_initialized := false
@@ -86,9 +87,9 @@ func _boot() -> void:
 	_log_boot("Creating Sun")
 	sun = SUN_SCENE.instantiate()
 	sun.position = Vector3.ZERO
-	sun.set("radius", SUN_RADIUS)
-	sun.set("surface_gravity", SUN_SURFACE_GRAVITY)
-	sun.set("death_radius", SUN_RADIUS)
+	sun.radius = SUN_RADIUS
+	sun.surface_gravity = SUN_SURFACE_GRAVITY
+	sun.death_radius = SUN_RADIUS
 	add_child(sun)
 
 	var entries: Array[CelestialEntry] = SolarSystemManifestScript.get_entries()
@@ -140,12 +141,10 @@ func _boot() -> void:
 	var floating_origin := FloatingOriginScript.new()
 	floating_origin.name = "FloatingOrigin"
 	add_child(floating_origin)
-	var leviathan := LeviathanScript.new()
-	leviathan.name = "Leviathan"
-	add_child(leviathan)
-	# The ambience already mixes against a dread factor; the leviathan is what
-	# finally drives it, so the wind and the ocean die when it shows up.
-	_dread_pulse = leviathan
+	_leviathan = LeviathanScript.new()
+	_leviathan.name = "Leviathan"
+	# The wind and the ocean die when the leviathan shows up.
+	add_child(_leviathan)
 	_loaded = true
 	_log_boot("Boot complete")
 	_loading_screen.finish()
@@ -233,37 +232,33 @@ func _set_stream_loop(stream: AudioStream) -> void:
 func _update_underwater_state(delta: float, camera: Camera3D) -> void:
 	var target_strength := 0.0
 	if camera != null:
-		var source: Node3D = gravity_service.get_nearest_surface(camera.global_position)
-		if source == null:
-			source = gravity_service.get_strongest(camera.global_position)
-		if source != null and source.has_method("get_water_depth"):
-			target_strength = underwater_effect_target(float(source.get_water_depth(camera.global_position)))
+		var source := gravity_service.get_reference_body(camera.global_position)
+		if source != null:
+			target_strength = BonificationMath.underwater_effect_target(source.get_water_depth(camera.global_position))
 	_underwater_strength = move_toward(_underwater_strength, target_strength, delta * 2.8)
 
 
 func _update_environment_feedback(delta: float, camera: Camera3D) -> void:
 	if camera == null or _ocean_audio == null:
 		return
-	var source := gravity_service.get_nearest_surface(camera.global_position)
-	if source == null:
-		source = gravity_service.get_strongest(camera.global_position)
+	var source := gravity_service.get_reference_body(camera.global_position)
 	var weather_source := _get_weather_source(camera.global_position)
-	var water_depth := float(source.get_water_depth(camera.global_position)) if source != null and source.has_method("get_water_depth") else -INF
+	var water_depth := source.get_water_depth(camera.global_position) if source != null else -INF
 	var distance_to_surface := absf(water_depth) if is_finite(water_depth) else INF
 	var ocean_target := 0.0
-	if source != null and source.get("has_ocean") == true:
+	if source != null and source.has_ocean:
 		ocean_target = clampf(1.0 - distance_to_surface / 18.0, 0.0, 1.0)
 		if water_depth > 0.0:
 			ocean_target = maxf(ocean_target, 0.45)
 	var in_atmosphere := false
 	var wind_target := 0.0
-	if source != null and source.get("has_atmosphere") == true:
-		var atmosphere_radius := float(source.get("radius")) * (1.0 + float(source.get("atmosphere_scale")))
+	if source != null and source.has_atmosphere:
+		var atmosphere_radius := source.radius * (1.0 + source.atmosphere_scale)
 		var distance_to_center := camera.global_position.distance_to(source.global_position)
 		in_atmosphere = atmosphere_contains(camera.global_position, source.global_position, float(source.get("radius")), float(source.get("atmosphere_scale")))
 		wind_target = clampf((atmosphere_radius - distance_to_center) / maxf(atmosphere_radius - float(source.get("radius")), 0.001), 0.0, 1.0)
 		wind_target *= 1.0 - _underwater_strength
-	var dread := float(_dread_pulse.call("get_dread_factor")) if _dread_pulse != null else 0.0
+	var dread := _leviathan.get_dread_factor() if _leviathan != null else 0.0
 	var ambience := 1.0 - dread
 	_ocean_audio.volume_linear = move_toward(_ocean_audio.volume_linear, ocean_target * 0.42 * ambience, delta * 0.6)
 	_wind_audio.volume_linear = move_toward(_wind_audio.volume_linear, wind_target * 0.34 * ambience, delta * 0.6)
@@ -278,15 +273,14 @@ func _update_environment_feedback(delta: float, camera: Camera3D) -> void:
 	_was_underwater = underwater
 	_was_in_atmosphere = in_atmosphere
 	_transition_strength = move_toward(_transition_strength, 0.0, delta * 1.8)
-	var weather_feedback: Dictionary = weather_source.get_weather_feedback(camera.global_position) if weather_source != null else {}
-	_cloud_transition_strength = float(weather_feedback.get("cloud_transition", 0.0))
+	_cloud_transition_strength = weather_source.get_weather_cloud_transition(camera.global_position) if weather_source != null else 0.0
 	_transition_tint.visible = _transition_strength > 0.001 or _cloud_transition_strength > 0.001
 	var transition_material := _transition_tint.material as ShaderMaterial
 	transition_material.set_shader_parameter("strength", _transition_strength)
 	transition_material.set_shader_parameter("cloud_strength", _cloud_transition_strength)
 	var rain_target := 0.0
 	if weather_source != null:
-		rain_target = float(weather_feedback.get("rain_strength", 0.0)) * (1.0 - _underwater_strength)
+		rain_target = weather_source.get_weather_rain_strength(camera.global_position) * (1.0 - _underwater_strength)
 	_rain_strength = move_toward(_rain_strength, rain_target, delta * 1.2)
 	_rain_overlay.visible = _rain_strength > 0.001
 	(_rain_overlay.material as ShaderMaterial).set_shader_parameter("strength", _rain_strength)
@@ -296,11 +290,12 @@ func _get_weather_source(camera_position: Vector3) -> PlanetBody:
 	var nearest: PlanetBody = null
 	var nearest_distance := INF
 	for body in get_tree().get_nodes_in_group("celestial_body"):
-		if not is_instance_valid(body) or not body.has_method("has_weather_capability") or not body.has_weather_capability():
+		var planet := body as PlanetBody
+		if planet == null or not planet.has_weather_capability():
 			continue
-		var distance := (body as Node3D).global_position.distance_squared_to(camera_position)
+		var distance := planet.global_position.distance_squared_to(camera_position)
 		if distance < nearest_distance:
-			nearest = body as PlanetBody
+			nearest = planet
 			nearest_distance = distance
 	return nearest
 
@@ -335,9 +330,7 @@ func _update_lighting(camera: Camera3D) -> void:
 		up = Vector3.RIGHT
 	sun_light.global_position = camera.global_position
 	sun_light.look_at(camera.global_position + ray_direction, up)
-	var source := gravity_service.get_nearest_surface(camera.global_position)
-	if source == null:
-		source = gravity_service.get_strongest(camera.global_position)
+	var source := gravity_service.get_reference_body(camera.global_position)
 	if source == null or source == sun:
 		fill_light.light_energy = 0.0
 		return
@@ -356,27 +349,27 @@ func _update_sky(camera: Camera3D) -> void:
 	_sky_material.set_shader_parameter("sun_direction", camera_to_sun.normalized())
 	# The fake distant sun and the real exploding mesh must not overlap once the supernova
 	# pushes the camera far plane past the sun.
-	var glow_strength := 0.0 if bool(sun.call("is_exploding")) else distant_sun_glow_strength(camera_to_sun.length(), float(sun.get("radius")))
+	var glow_strength := 0.0 if sun.is_exploding() else distant_sun_glow_strength(camera_to_sun.length(), sun.radius)
 	_sky_material.set_shader_parameter("sun_glow_strength", glow_strength)
 	var weather_source := _get_weather_source(camera.global_position)
-	var weather_feedback: Dictionary = weather_source.get_weather_feedback(camera.global_position) if weather_source != null else {}
-	var storm_occlusion := float(weather_feedback.get("sky_occlusion", 0.0))
+	var storm_occlusion := weather_source.get_weather_sky_occlusion(camera.global_position) if weather_source != null else 0.0
 	_sky_material.set_shader_parameter("storm_occlusion", storm_occlusion)
 	var source := gravity_service.get_nearest_surface(camera.global_position)
-	var water_depth := float(source.get_water_depth(camera.global_position)) if source != null and source.has_method("get_water_depth") else -INF
+	var water_depth := source.get_water_depth(camera.global_position) if source != null else -INF
 	var sky_occlusion := 1.0 if water_depth > 0.0 else 0.0
 	_sky_material.set_shader_parameter("underwater_strength", sky_occlusion)
 	var spheres := PackedVector4Array()
 	for body in get_tree().get_nodes_in_group("celestial_body"):
-		if body != sun and body.get("has_ocean") == true and spheres.size() < 8:
-			spheres.append(Vector4(body.global_position.x, body.global_position.y, body.global_position.z, float(body.get("radius")) + float(body.get("ocean_level"))))
+		var ocean_body := body as CelestialBody
+		if ocean_body != null and ocean_body.has_ocean and spheres.size() < 8:
+			spheres.append(Vector4(ocean_body.global_position.x, ocean_body.global_position.y, ocean_body.global_position.z, ocean_body.radius + ocean_body.ocean_level))
 	_sky_material.set_shader_parameter("ocean_count", spheres.size())
 	_sky_material.set_shader_parameter("ocean_spheres", spheres)
 	var daylight := 0.0
 	if source != null and source != sun:
 		var local_up := (camera.global_position - source.global_position).normalized()
 		var local_sun := (sun.global_position - source.global_position).normalized()
-		var atmosphere_limit := float(source.get("radius")) * (1.0 + float(source.get("atmosphere_scale"))) if source.get("has_atmosphere") == true else float(source.get("radius")) * 1.05
+		var atmosphere_limit := source.radius * (1.0 + source.atmosphere_scale) if source.has_atmosphere else source.radius * 1.05
 		if camera.global_position.distance_to(source.global_position) < atmosphere_limit:
 			daylight = smoothstep(-0.08, 0.25, local_up.dot(local_sun))
 	_sky_material.set_shader_parameter("daylight", daylight * (1.0 - sky_occlusion))
@@ -508,6 +501,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 
+func is_loaded() -> bool:
+	return _loaded
+
+
 func respawn() -> void:
 	_spawn_controller.respawn()
 
@@ -529,4 +526,8 @@ func forget_body(body: Node3D) -> void:
 
 
 func spawn_on_planet_id(body_name: StringName) -> bool:
-	return _spawn_controller.spawn_on_planet_id(body_name)
+	return _spawn_controller.spawn_on_planet(get_body(body_name))
+
+
+func get_body(body_id: StringName) -> PlanetBody:
+	return _bodies_by_id.get(body_id) as PlanetBody

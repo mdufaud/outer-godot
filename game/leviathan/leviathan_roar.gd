@@ -1,3 +1,4 @@
+class_name LeviathanRoar
 extends Node
 
 # Everything the leviathan sounds like, generated in code the same way the

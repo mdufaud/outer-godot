@@ -1,5 +1,5 @@
 class_name PlanetBody
-extends AnimatableBody3D
+extends CelestialBody
 
 const PlanetConfigScript := preload("res://game/planets/shared/planet_config.gd")
 const PlanetDefaultsScript := preload("res://game/planets/shared/planet_defaults.gd")
@@ -34,15 +34,11 @@ var body_id: StringName = &"Planet"
 var quality_override: StringName = &""
 var shape_profile := PlanetShapeProfileScript.EARTH
 var surface_style: StringName = &"terrain"
-var radius := 0.0
 var core_radius := 0.0
-var surface_gravity := 0.0
 var influence_scale := 30.0
 var rng_seed := 0
 var perturb_strength := 0.0
 var quality_profile: StringName = &"desktop_high"
-var has_ocean := false
-var ocean_level := 0.0
 var ocean_shallow_color := Color.WHITE
 var ocean_deep_color := Color.BLACK
 var ocean_wave_strength := 0.0
@@ -60,9 +56,7 @@ var ocean_swell_wavelength := 1.0
 var ocean_swell_speed := 0.0
 var underwater_tint := Color(0.1, 0.4, 0.5)
 var underwater_darkness := 0.45
-var has_atmosphere := false
 var atmosphere_color := Color.WHITE
-var atmosphere_scale := 0.0
 var atmosphere_density_falloff := 1.0
 var atmosphere_wavelengths := Vector3.ONE
 var atmosphere_scattering_strength := 0.0
@@ -74,8 +68,6 @@ var shore_color := Color(0.66, 0.58, 0.36)
 var land_low_color := Color(0.13, 0.34, 0.12)
 var land_high_color := Color(0.35, 0.24, 0.12)
 
-var influence_radius := 0.0
-var orbital_velocity := Vector3.ZERO
 
 var _terrain: MeshInstance3D
 var _lod_meshes: Array[ArrayMesh] = []
@@ -87,8 +79,8 @@ var _atmosphere_lut: RefCounted
 var _atmosphere_lut_bound := false
 var _height_generator: RefCounted
 var _height_generator_initialized := false
-var _rock_feature: Node
-var _weather_feature: Node
+var _rock_feature: RockFeature
+var _weather_feature: WeatherFeature
 var _lod_resolutions: Array[int] = []
 var _active_lod := -1
 var _terrain_height_minmax := Vector2.ONE
@@ -224,11 +216,11 @@ func get_water_depth(position_value: Vector3) -> float:
 
 func _build_optional_features() -> void:
 	if config.weather.rock_feature_script != null:
-		_rock_feature = config.weather.rock_feature_script.new()
+		_rock_feature = config.weather.rock_feature_script.new() as RockFeature
 		_rock_feature.setup(self)
 		add_child(_rock_feature)
 	if weather_enabled and config.weather.feature_script != null:
-		_weather_feature = config.weather.feature_script.new()
+		_weather_feature = config.weather.feature_script.new() as WeatherFeature
 		_weather_feature.setup(self)
 		add_child(_weather_feature)
 
@@ -274,21 +266,13 @@ func get_weather_sky_occlusion(position_value: Vector3) -> float:
 
 
 func get_environment_force(world_position: Vector3) -> Vector3:
-	if _weather_feature != null and _weather_feature.has_method("get_environment_force"):
+	if _weather_feature != null:
 		return _weather_feature.get_environment_force(world_position)
 	return Vector3.ZERO
 
 
 func has_weather_capability() -> bool:
 	return weather_enabled
-
-
-func get_weather_feedback(position_value: Vector3) -> Dictionary:
-	return {
-		"cloud_transition": get_weather_cloud_transition(position_value),
-		"sky_occlusion": get_weather_sky_occlusion(position_value),
-		"rain_strength": get_weather_rain_strength(position_value),
-	}
 
 
 func get_weather_rain_strength(position_value: Vector3) -> float:
@@ -299,31 +283,27 @@ func get_weather_rain_strength(position_value: Vector3) -> float:
 
 
 func get_weather_contacts() -> Array[Area3D]:
-	if _weather_feature != null and _weather_feature.has_method("get_contacts"):
+	if _weather_feature != null:
 		return _weather_feature.get_contacts()
 	return []
 
 
 func get_weather_visibility() -> float:
-	if _weather_feature != null and _weather_feature.has_method("get_visibility"):
-		return float(_weather_feature.get_visibility())
+	if _weather_feature != null:
+		return _weather_feature.get_visibility()
 	return 0.0
 
 
 func get_landing_rock_directions() -> Array[Vector3]:
-	if _rock_feature != null and _rock_feature.has_method("get_directions"):
+	if _rock_feature != null:
 		return _rock_feature.get_directions()
 	return []
 
 
 func get_landing_rock_radii() -> Array[float]:
-	if _rock_feature != null and _rock_feature.has_method("get_radii"):
+	if _rock_feature != null:
 		return _rock_feature.get_radii()
 	return []
-
-
-func get_gravitational_parameter() -> float:
-	return surface_gravity * radius * radius
 
 
 func get_boot_progress() -> float:

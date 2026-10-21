@@ -24,11 +24,11 @@ func apply(config_value: PlanetConfig) -> void:
 
 # Weather and rock features are nodes the real planet builds in `_build_optional_features`; tests
 # that need them attach them through here so PlanetBody's public accessors keep working.
-func attach_rock_feature(feature: Node) -> void:
+func attach_rock_feature(feature: RockFeature) -> void:
 	_rock_feature = feature
 	add_child(feature)
 
 
-func attach_weather_feature(feature: Node) -> void:
+func attach_weather_feature(feature: WeatherFeature) -> void:
 	_weather_feature = feature
 	add_child(feature)

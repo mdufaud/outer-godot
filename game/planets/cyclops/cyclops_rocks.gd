@@ -1,5 +1,5 @@
 class_name CyclopsRocks
-extends Node3D
+extends RockFeature
 
 var body: PlanetBody
 var _rock_directions: Array[Vector3] = []

@@ -1,3 +1,4 @@
+class_name DreadPulse
 extends Node
 
 # Approach dread for the intruder body: everything else goes quiet and a single

@@ -20,7 +20,7 @@ const CAPTURES := {
 }
 const STEP := 1.0 / 30.0
 
-var _leviathan: Node
+var _leviathan: Leviathan
 var _debug_camera: Camera3D
 var _clock := 0.0
 var _pending := []
@@ -36,7 +36,7 @@ func _start() -> void:
 	# actually register rather than assuming it is there on frame two.
 	for attempt in 600:
 		await process_frame
-		_leviathan = get_first_node_in_group("leviathan")
+		_leviathan = get_first_node_in_group("leviathan") as Leviathan
 		if _leviathan != null:
 			break
 	if _leviathan == null:
@@ -52,7 +52,7 @@ func _start() -> void:
 	_leviathan.process_mode = Node.PROCESS_MODE_DISABLED
 	if OS.get_cmdline_user_args().has("debug"):
 		_place_debug_camera()
-	_leviathan.call("summon")
+	_leviathan.summon()
 	_run()
 
 
@@ -70,8 +70,8 @@ func _place_debug_camera() -> void:
 func _aim_debug_camera() -> void:
 	if _debug_camera == null:
 		return
-	var direction: Vector3 = _leviathan.get("_direction")
-	var maw: Vector3 = (_leviathan as Node3D).global_position
+	var direction := _leviathan._direction
+	var maw := _leviathan.global_position
 	_debug_camera.global_position = maw - direction * 8000.0 - Vector3.UP * 10000.0
 	_debug_camera.look_at(maw + direction * 3000.0, Vector3.UP)
 	_debug_camera.make_current()
@@ -79,7 +79,7 @@ func _aim_debug_camera() -> void:
 
 func _run() -> void:
 	while not _pending.is_empty():
-		_leviathan.call("_process", STEP)
+		_leviathan._process(STEP)
 		_aim_debug_camera()
 		_clock += STEP
 		if _clock >= _pending[0]:

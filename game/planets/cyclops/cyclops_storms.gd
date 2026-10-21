@@ -1,5 +1,5 @@
 class_name CyclopsStorms
-extends Node3D
+extends WeatherFeature
 
 const GeometryScript := preload("res://game/planets/cyclops/cyclops_geometry.gd")
 const TORNADO_COUNT := 14

@@ -14,10 +14,10 @@ const SUN_DIRECTION := Vector3(0.0, 0.0, 1.0)
 @export var capture_directory := "user://planet_gallery"
 @export var capture_warmup_frames := 30
 
-var _planets: Array[Node3D] = []
+var _planets: Array[PlanetBody] = []
 var _camera: Camera3D
-var _ship: RigidBody3D
-var _sun: Node3D
+var _ship: Ship
+var _sun: Sun
 var _sun_light: DirectionalLight3D
 var _sky_material: ShaderMaterial
 var _planet_effects: CompositorEffect
@@ -136,8 +136,8 @@ func _build_sun() -> void:
     _sun = SUN_SCENE.instantiate()
     _sun.name = "GallerySun"
     _sun.position = SUN_DIRECTION * 100000.0
-    _sun.set("radius", 345.0)
-    _sun.set("surface_gravity", 50.0)
+    _sun.radius = 345.0
+    _sun.surface_gravity = 50.0
     add_child(_sun)
     _sun_light = DirectionalLight3D.new()
     _sun_light.light_energy = 1.2
@@ -207,7 +207,7 @@ func _build_ship() -> void:
     _ship = SHIP_SCENE.instantiate()
     _ship.name = "TestShip"
     add_child(_ship)
-    var interior_material: StandardMaterial3D = _ship.get("dark_mat")
+    var interior_material := _ship.dark_mat
     interior_material.cull_mode = BaseMaterial3D.CULL_DISABLED
     _ship.freeze = true
     _place_ship()
@@ -258,7 +258,7 @@ func _apply_gallery_camera() -> void:
         return
     var planet := _planets[_selected_index]
     var center := planet.global_position
-    var radius := float(planet.get("radius"))
+    var radius := planet.radius
     for other_planet in _planets:
         other_planet.visible = other_planet == planet
     var distance := (radius * 4.5 + 35.0) * _gallery_distance_scale
@@ -269,7 +269,7 @@ func _apply_gallery_camera() -> void:
 
 func _set_cockpit_mode(enabled: bool) -> void:
     _cockpit_mode = enabled
-    var cockpit_camera: Camera3D = _ship.get("cockpit_cam")
+    var cockpit_camera := _ship.cockpit_cam
     if _cockpit_mode:
         _place_ship()
         _camera.current = false
@@ -282,11 +282,11 @@ func _set_cockpit_mode(enabled: bool) -> void:
 func _place_ship() -> void:
     if _ship == null or _planets.is_empty():
         return
-    var terra: Node3D = _planet_by_name("Terra")
+    var terra := _planet_by_name("Terra")
     if terra == null:
         return
     var direction := SUN_DIRECTION if _ship_day else -SUN_DIRECTION
-    var radius := float(terra.get("radius"))
+    var radius := terra.radius
     _ship.global_position = terra.global_position + direction * (radius + 3.0)
     var up := Vector3.UP
     var forward := direction
@@ -296,13 +296,13 @@ func _place_ship() -> void:
     _ship.linear_velocity = Vector3.ZERO
     _ship.angular_velocity = Vector3.ZERO
     _ship.freeze = true
-    var cockpit_camera: Camera3D = _ship.get("cockpit_cam")
+    var cockpit_camera := _ship.cockpit_cam
     cockpit_camera.fov = 78.0
     cockpit_camera.look_at(cockpit_camera.global_position + direction * 8.0 + Vector3(0.0, -8.0, 0.0), Vector3.UP)
     cockpit_camera.current = _cockpit_mode
 
 
-func _planet_by_name(body_name: String) -> Node3D:
+func _planet_by_name(body_name: String) -> PlanetBody:
     for planet in _planets:
         if planet.name == body_name:
             return planet
@@ -336,12 +336,12 @@ func _update_sky_and_light() -> void:
     _sky_material.set_shader_parameter("underwater_strength", 0.0)
     var ocean_spheres := PackedVector4Array()
     for planet in _planets:
-        if bool(planet.get("has_ocean")) and ocean_spheres.size() < 8:
+        if planet.has_ocean and ocean_spheres.size() < 8:
             ocean_spheres.append(Vector4(
                 planet.global_position.x,
                 planet.global_position.y,
                 planet.global_position.z,
-                float(planet.get("radius")) + float(planet.get("ocean_level"))
+                planet.radius + planet.ocean_level
             ))
     _sky_material.set_shader_parameter("ocean_count", ocean_spheres.size())
     _sky_material.set_shader_parameter("ocean_spheres", ocean_spheres)
@@ -353,7 +353,7 @@ func _update_status() -> void:
     var selected_name := "Terra" if _cockpit_mode else (String(_planets[_selected_index].name) if not _planets.is_empty() else "loading")
     var ready_count := 0
     for planet in _planets:
-        if planet.has_method("is_boot_ready") and bool(planet.call("is_boot_ready")):
+        if planet.is_boot_ready():
             ready_count += 1
     var mode := "COCKPIT" if _cockpit_mode else "GALLERY"
     var submode := "day" if _ship_day else "night"
@@ -429,7 +429,7 @@ func _apply_capture_item(item: Dictionary) -> void:
     _set_fast_mode(bool(item.fast))
     _place_ship()
     _camera.current = false
-    var cockpit_camera: Camera3D = _ship.get("cockpit_cam")
+    var cockpit_camera := _ship.cockpit_cam
     cockpit_camera.current = true
 
 
@@ -437,9 +437,9 @@ func _all_planets_ready() -> bool:
     if _planets.size() != SOLAR_SYSTEM_MANIFEST.get_entries().size():
         return false
     for planet in _planets:
-        if not planet.has_method("is_boot_ready") or not bool(planet.call("is_boot_ready")):
+        if not planet.is_boot_ready():
             return false
-        if not String(planet.call("get_generator_error")).is_empty():
+        if not planet.get_generator_error().is_empty():
             return false
     return true
 
