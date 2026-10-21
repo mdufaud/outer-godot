@@ -26,39 +26,7 @@ uniform sampler2D depth_texture : hint_depth_texture, repeat_disable, filter_nea
 
 varying vec3 world_position;
 
-float hash3(vec3 p) {
-	return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
-}
-
-float value_noise3(vec3 p) {
-	vec3 cell = floor(p);
-	vec3 blend_value = fract(p);
-	blend_value = blend_value * blend_value * (3.0 - 2.0 * blend_value);
-	float c000 = hash3(cell);
-	float c100 = hash3(cell + vec3(1.0, 0.0, 0.0));
-	float c010 = hash3(cell + vec3(0.0, 1.0, 0.0));
-	float c110 = hash3(cell + vec3(1.0, 1.0, 0.0));
-	float c001 = hash3(cell + vec3(0.0, 0.0, 1.0));
-	float c101 = hash3(cell + vec3(1.0, 0.0, 1.0));
-	float c011 = hash3(cell + vec3(0.0, 1.0, 1.0));
-	float c111 = hash3(cell + vec3(1.0, 1.0, 1.0));
-	return mix(
-		mix(mix(c000, c100, blend_value.x), mix(c010, c110, blend_value.x), blend_value.y),
-		mix(mix(c001, c101, blend_value.x), mix(c011, c111, blend_value.x), blend_value.y),
-		blend_value.z
-	);
-}
-
-float fbm3(vec3 p) {
-	float sum = 0.0;
-	float amplitude = 0.5;
-	for (int octave = 0; octave < 2; octave++) {
-		sum += value_noise3(p) * amplitude;
-		p = p * 2.07 + vec3(11.3, 5.7, 3.1);
-		amplitude *= 0.5;
-	}
-	return sum;
-}
+#include "res://game/shared/shaders/noise.gdshaderinc"
 
 // Radius of the plume envelope at a given fraction along the axis.
 float cone_radius(float along) {
@@ -96,7 +64,7 @@ float sample_density(vec3 position) {
 	);
 	// Squashed across the axis and stretched along it, so the noise reads as
 	// filaments streaming outward rather than as blobs.
-	float wisps = smoothstep(0.18, 0.72, fbm3(vec3(flow.xy * 2.6, flow.z * 0.55)));
+	float wisps = smoothstep(0.18, 0.72, sin_fbm(vec3(flow.xy * 2.6, flow.z * 0.55), 2, 0.5, 0.5));
 	float packet_phase = (rel.z - flow_time) * 0.055;
 	float packets = smoothstep(-0.35, 0.7, sin(packet_phase + sin(packet_phase * 0.37) * 1.8));
 	float shedding = mix(1.0, mix(0.42, 1.4, packets), smoothstep(0.08, 0.72, along));

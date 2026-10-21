@@ -10,41 +10,7 @@ uniform float ignition: hint_range(0.0, 1.0) = 0.0;
 
 varying vec3 v_pos;
 
-float hash3(vec3 p) {
-	p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
-	p *= 17.0;
-	return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
-}
-
-float value_noise(vec3 p) {
-	vec3 i = floor(p);
-	vec3 f = fract(p);
-	f = f * f * (3.0 - 2.0 * f);
-	float n000 = hash3(i);
-	float n100 = hash3(i + vec3(1, 0, 0));
-	float n010 = hash3(i + vec3(0, 1, 0));
-	float n110 = hash3(i + vec3(1, 1, 0));
-	float n001 = hash3(i + vec3(0, 0, 1));
-	float n101 = hash3(i + vec3(1, 0, 1));
-	float n011 = hash3(i + vec3(0, 1, 1));
-	float n111 = hash3(i + vec3(1, 1, 1));
-	return mix(
-		mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
-		mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y),
-		f.z
-	);
-}
-
-float fbm(vec3 p) {
-	float v = 0.0;
-	float a = 0.5;
-	for (int i = 0; i < 4; i++) {
-		v += a * value_noise(p);
-		p *= 2.1;
-		a *= 0.5;
-	}
-	return v;
-}
+#include "res://game/shared/shaders/noise.gdshaderinc"
 
 void vertex() {
 	v_pos = normalize(VERTEX);
@@ -53,9 +19,9 @@ void vertex() {
 void fragment() {
 	vec3 direction = normalize(v_pos);
 	vec3 churn = vec3(TIME * 0.09, -TIME * 0.07, TIME * 0.05);
-	float broad = fbm(direction * 2.6 + churn);
-	float cells = fbm(direction * 8.0 - churn * 1.6 + broad * 2.4);
-	float filaments = fbm(direction * 19.0 + churn * 0.8 + cells * 1.8);
+	float broad = fbm(direction * 2.6 + churn, 4, 2.1);
+	float cells = fbm(direction * 8.0 - churn * 1.6 + broad * 2.4, 4, 2.1);
+	float filaments = fbm(direction * 19.0 + churn * 0.8 + cells * 1.8, 4, 2.1);
 	float turbulence = clamp(broad * 0.4 + cells * 0.4 + filaments * 0.35, 0.0, 1.0);
 	// Grazing angles are where the shell is thickest along the view ray, so the
 	// silhouette has to read hotter than the face pointing straight at the camera.

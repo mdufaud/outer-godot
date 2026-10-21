@@ -12,33 +12,7 @@ uniform sampler2D depth_texture : hint_depth_texture, filter_nearest;
 varying vec3 local_position;
 varying vec3 local_camera;
 
-float hash3(vec3 p) {
-	return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
-}
-
-float value_noise3(vec3 p) {
-	vec3 cell = floor(p);
-	vec3 blend_value = fract(p);
-	blend_value = blend_value * blend_value * (3.0 - 2.0 * blend_value);
-	return mix(
-		mix(mix(hash3(cell), hash3(cell + vec3(1.0, 0.0, 0.0)), blend_value.x),
-			mix(hash3(cell + vec3(0.0, 1.0, 0.0)), hash3(cell + vec3(1.0, 1.0, 0.0)), blend_value.x), blend_value.y),
-		mix(mix(hash3(cell + vec3(0.0, 0.0, 1.0)), hash3(cell + vec3(1.0, 0.0, 1.0)), blend_value.x),
-			mix(hash3(cell + vec3(0.0, 1.0, 1.0)), hash3(cell + vec3(1.0, 1.0, 1.0)), blend_value.x), blend_value.y),
-		blend_value.z
-	);
-}
-
-float fbm3(vec3 p) {
-	float value = 0.0;
-	float amplitude = 0.52;
-	for (int octave = 0; octave < 4; octave++) {
-		value += value_noise3(p) * amplitude;
-		p = p * 2.07 + vec3(11.3, 5.7, 3.1);
-		amplitude *= 0.49;
-	}
-	return value;
-}
+#include "res://game/shared/shaders/noise.gdshaderinc"
 
 float segment_distance(vec3 point, vec3 start, vec3 end) {
 	vec3 line = end - start;
@@ -49,8 +23,8 @@ float segment_distance(vec3 point, vec3 start, vec3 end) {
 // Bolts run down the throat axis (local Z), kinking sideways, so they read as
 // discharges inside the funnel rather than as a lattice crossing the box.
 float bolt_field(vec3 point, float seed) {
-	vec3 bend_a = vec3(hash3(vec3(seed, 1.0, 2.0)) - 0.5, hash3(vec3(seed, 3.0, 4.0)) - 0.5, -0.42);
-	vec3 bend_b = vec3(hash3(vec3(seed, 5.0, 6.0)) - 0.5, hash3(vec3(seed, 7.0, 8.0)) - 0.5, 0.34);
+	vec3 bend_a = vec3(sin_hash3(vec3(seed, 1.0, 2.0)) - 0.5, sin_hash3(vec3(seed, 3.0, 4.0)) - 0.5, -0.42);
+	vec3 bend_b = vec3(sin_hash3(vec3(seed, 5.0, 6.0)) - 0.5, sin_hash3(vec3(seed, 7.0, 8.0)) - 0.5, 0.34);
 	vec3 start = vec3(0.0, 0.0, -1.30);
 	vec3 end = vec3(0.0, 0.0, 1.15);
 	float distance_value = min(segment_distance(point, start, bend_a), segment_distance(point, bend_a, bend_b));
@@ -115,7 +89,7 @@ void fragment() {
 		);
 		vec3 metric_position = twisted * (max(half_extents.x, half_extents.z) / field_scale);
 		vec3 advected = metric_position * 1.35 + vec3(0.0, 0.0, -TIME * 0.55);
-		float turbulence = fbm3(advected);
+		float turbulence = sin_fbm(advected, 4, 0.52, 0.49);
 		// Local +Z runs down the gullet, so the cloud is a wide wall at the lips
 		// narrowing to a throat that swallows the light. The radius is chewed up
 		// by the same noise, so the funnel never shows a clean analytic edge.

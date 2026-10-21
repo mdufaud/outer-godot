@@ -25,41 +25,7 @@ bool ray_hits_sphere(vec3 origin, vec3 direction, vec4 sphere) {
 	return -b + root > 0.0 && max(-b - root, 0.0) < 1000000.0;
 }
 
-float hash3(vec3 p) {
-	p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
-	p *= 17.0;
-	return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
-}
-
-float value_noise(vec3 p) {
-	vec3 i = floor(p);
-	vec3 f = fract(p);
-	f = f * f * (3.0 - 2.0 * f);
-	float n000 = hash3(i);
-	float n100 = hash3(i + vec3(1, 0, 0));
-	float n010 = hash3(i + vec3(0, 1, 0));
-	float n110 = hash3(i + vec3(1, 1, 0));
-	float n001 = hash3(i + vec3(0, 0, 1));
-	float n101 = hash3(i + vec3(1, 0, 1));
-	float n011 = hash3(i + vec3(0, 1, 1));
-	float n111 = hash3(i + vec3(1, 1, 1));
-	return mix(
-		mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
-		mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y),
-		f.z
-	);
-}
-
-float fbm(vec3 p) {
-	float v = 0.0;
-	float a = 0.5;
-	for (int i = 0; i < 4; i++) {
-		v += a * value_noise(p);
-		p *= 2.1;
-		a *= 0.5;
-	}
-	return v;
-}
+#include "res://game/shared/shaders/noise.gdshaderinc"
 
 vec3 star_layer(vec3 dir, float density, float rate, float max_bright, float halo_strength, float twinkle_amt) {
 	vec3 cell = floor(dir * density);
@@ -84,7 +50,7 @@ vec3 star_layer(vec3 dir, float density, float rate, float max_bright, float hal
 void sky() {
 	vec3 dir = EYEDIR;
 	vec3 col = vec3(0.002, 0.004, 0.009);
-	float haze = smoothstep(0.42, 0.82, fbm(dir * 2.4 + 17.0));
+	float haze = smoothstep(0.42, 0.82, fbm(dir * 2.4 + 17.0, 4, 2.1));
 	col += vec3(0.008, 0.012, 0.022) * haze;
 	vec3 stars = star_layer(dir, 360.0, 0.035, 0.18, 0.015, 0.0);
 	stars += star_layer(dir, 150.0, 0.018, 0.32, 0.025, 0.04);

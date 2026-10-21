@@ -6,9 +6,7 @@ uniform float strength = 0.0;
 uniform vec3 tint : source_color = vec3(0.035, 0.105, 0.098);
 uniform int droplet_layers : hint_range(1, 3) = 3;
 
-float hash(vec2 value) {
-	return fract(sin(dot(value, vec2(127.1, 311.7))) * 43758.5453);
-}
+#include "res://game/shared/shaders/noise.gdshaderinc"
 
 // Cell-noise droplets: at most one bead per cell, respawning on its own timer so
 // the pattern reads as falling rain instead of a frozen texture.
@@ -21,13 +19,13 @@ float droplet_layer(vec2 position, float cell_size, float life, float seed) {
 		for (int offset_y = -1; offset_y <= 1; offset_y++) {
 			vec2 neighbour = vec2(float(offset_x), float(offset_y));
 			vec2 identifier = cell + neighbour + seed;
-			float slot = floor(TIME / life + hash(identifier * 1.37));
-			if (hash(identifier + slot * 7.31) < 0.74) {
+			float slot = floor(TIME / life + hash2(identifier * 1.37));
+			if (hash2(identifier + slot * 7.31) < 0.74) {
 				continue;
 			}
-			vec2 centre = vec2(hash(identifier + slot * 3.17), hash(identifier + slot * 5.91)) - 0.5;
-			float age = fract(TIME / life + hash(identifier * 1.37));
-			float radius = mix(0.07, 0.17, hash(identifier + slot * 11.3));
+			vec2 centre = vec2(hash2(identifier + slot * 3.17), hash2(identifier + slot * 5.91)) - 0.5;
+			float age = fract(TIME / life + hash2(identifier * 1.37));
+			float radius = mix(0.07, 0.17, hash2(identifier + slot * 11.3));
 			radius *= smoothstep(0.0, 0.14, age) * (1.0 - smoothstep(0.7, 1.0, age));
 			float distance_to_centre = length(local - neighbour - centre * 0.72);
 			mask = max(mask, (1.0 - smoothstep(radius * 0.45, radius, distance_to_centre)));
@@ -51,12 +49,12 @@ float droplet_field(vec2 position) {
 float trickle_field(vec2 position) {
 	vec2 scaled = vec2(position.x / 0.21, position.y);
 	float column = floor(scaled.x);
-	if (hash(vec2(column, 21.7)) < 0.6) {
+	if (hash2(vec2(column, 21.7)) < 0.6) {
 		return 0.0;
 	}
-	float speed = mix(0.03, 0.075, hash(vec2(column, 3.7)));
-	float head = fract(hash(vec2(column, 9.1)) + TIME * speed);
-	float lateral = (fract(scaled.x) - 0.5) + (hash(vec2(column, 5.3)) - 0.5) * 0.55;
+	float speed = mix(0.03, 0.075, hash2(vec2(column, 3.7)));
+	float head = fract(hash2(vec2(column, 9.1)) + TIME * speed);
+	float lateral = (fract(scaled.x) - 0.5) + (hash2(vec2(column, 5.3)) - 0.5) * 0.55;
 	float trail = smoothstep(-0.13, 0.0, position.y - head) * step(position.y, head);
 	float bead = (1.0 - smoothstep(0.0, 0.022, abs(position.y - head)));
 	return (1.0 - smoothstep(0.0, 0.05, abs(lateral))) * max(bead, trail * 0.4);

@@ -14,45 +14,7 @@ varying vec3 world_position;
 varying vec3 world_normal;
 
 
-vec3 hash3(vec3 position) {
-	position = vec3(
-		dot(position, vec3(127.1, 311.7, 74.7)),
-		dot(position, vec3(269.5, 183.3, 246.1)),
-		dot(position, vec3(113.5, 271.9, 124.6))
-	);
-	return fract(sin(position) * 43758.5453123) * 2.0 - 1.0;
-}
-
-
-float value_noise(vec3 position) {
-	vec3 cell = floor(position);
-	vec3 local = fract(position);
-	vec3 weight = local * local * (3.0 - 2.0 * local);
-	float result = 0.0;
-	for (int x = 0; x < 2; x++) {
-		for (int y = 0; y < 2; y++) {
-			for (int z = 0; z < 2; z++) {
-				vec3 corner = vec3(float(x), float(y), float(z));
-				float value = dot(hash3(cell + corner), local - corner);
-				vec3 blend = mix(1.0 - weight, weight, corner);
-				result += value * blend.x * blend.y * blend.z;
-			}
-		}
-	}
-	return result * 0.5 + 0.5;
-}
-
-
-float fbm(vec3 position) {
-	float sum = 0.0;
-	float amplitude = 0.5;
-	for (int layer = 0; layer < 4; layer++) {
-		sum += value_noise(position) * amplitude;
-		position *= 2.13;
-		amplitude *= 0.5;
-	}
-	return sum;
-}
+#include "res://game/shared/shaders/noise.gdshaderinc"
 
 
 void vertex() {
@@ -69,7 +31,7 @@ void fragment() {
 		* (1.0 - smoothstep(outer_radius - 20.0, outer_radius, radius));
 	vec2 around = normalize(local_position.xz) * 5.0;
 	// Streaks follow the ring: high frequency along the angle, low across it.
-	float streaks = fbm(vec3(around.x, radius * 0.055, around.y));
+	float streaks = gradient_fbm(vec3(around.x, radius * 0.055, around.y), 4, 2.13);
 	streaks = mix(0.45, 1.35, streaks);
 	// Dust lights up when the camera looks through it towards the sun.
 	vec3 to_camera = normalize(CAMERA_POSITION_WORLD - world_position);

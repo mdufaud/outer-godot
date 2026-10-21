@@ -19,22 +19,7 @@ varying float v_radius;
 varying float v_exterior;
 varying vec3 v_view_up;
 
-float hash3(vec3 p) {
-	p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
-	p *= 17.0;
-	return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
-}
-
-float hash1(float value) {
-	return fract(sin(value * 127.1) * 43758.5453);
-}
-
-float noise1(float value) {
-	float cell = floor(value);
-	float blend_value = fract(value);
-	blend_value = blend_value * blend_value * (3.0 - 2.0 * blend_value);
-	return mix(hash1(cell), hash1(cell + 1.0), blend_value);
-}
+#include "res://game/shared/shaders/noise.gdshaderinc"
 
 vec3 bolt_reference(vec3 axis) {
 	vec3 up = v_view_up;
@@ -107,48 +92,6 @@ float lightning_bolt(vec3 direction, vec3 observer_direction, float seed, out fl
 	return max(trunk * vertical_mask, max(branch * 0.72, second_branch * 0.58)) * facing_mask;
 }
 
-float value_noise(vec3 p) {
-	vec3 i = floor(p);
-	vec3 f = fract(p);
-	f = f * f * (3.0 - 2.0 * f);
-	float n000 = hash3(i);
-	float n100 = hash3(i + vec3(1, 0, 0));
-	float n010 = hash3(i + vec3(0, 1, 0));
-	float n110 = hash3(i + vec3(1, 1, 0));
-	float n001 = hash3(i + vec3(0, 0, 1));
-	float n101 = hash3(i + vec3(1, 0, 1));
-	float n011 = hash3(i + vec3(0, 1, 1));
-	float n111 = hash3(i + vec3(1, 1, 1));
-	return mix(
-		mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
-		mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y),
-		f.z
-	);
-}
-
-float fbm(vec3 p) {
-	float v = 0.0;
-	float a = 0.5;
-	for (int i = 0; i < 5; i++) {
-		v += a * value_noise(p);
-		p = p * 2.05 + vec3(17.0, -11.0, 7.0);
-		a *= 0.48;
-	}
-	return v;
-}
-
-float ridged_fbm(vec3 p) {
-	float v = 0.0;
-	float a = 0.5;
-	for (int i = 0; i < 4; i++) {
-		float n = 1.0 - abs(value_noise(p) * 2.0 - 1.0);
-		v += n * n * a;
-		p = p * 2.18 + vec3(-9.0, 13.0, 5.0);
-		a *= 0.5;
-	}
-	return v;
-}
-
 void vertex() {
 	v_pos = normalize(VERTEX);
 	vec3 local_camera = (inverse(MODEL_MATRIX) * vec4(CAMERA_POSITION_WORLD, 1.0)).xyz;
@@ -167,8 +110,8 @@ void fragment() {
 	flow.z += cos(direction.y * 6.0 - direction.x * 3.0 + time * 4.0) * 0.12;
 	flow = normalize(flow);
 
-	float broad_noise = fbm(flow * 3.4 + vec3(time * 2.0, -time, time * 0.7));
-	float fine_noise = fbm(flow * 10.0 + vec3(-time * 3.0, time * 1.7, time * 2.2));
+	float broad_noise = offset_fbm(flow * 3.4 + vec3(time * 2.0, -time, time * 0.7), 5, 2.05, 0.48, vec3(17.0, -11.0, 7.0));
+	float fine_noise = offset_fbm(flow * 10.0 + vec3(-time * 3.0, time * 1.7, time * 2.2), 5, 2.05, 0.48, vec3(17.0, -11.0, 7.0));
 	float ridge_noise = ridged_fbm(flow * 16.0 + vec3(time * 4.0, -time * 2.0, time));
 	float broad_clouds = smoothstep(0.22, 0.78, broad_noise * 0.78 + fine_noise * 0.22);
 	float cloud_detail = smoothstep(0.38, 0.82, fine_noise * 0.62 + ridge_noise * 0.38);
