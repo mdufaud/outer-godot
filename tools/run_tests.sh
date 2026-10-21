@@ -5,7 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-GODOT="${GODOT:-${HOME}/.local/bin/godot}"
+GODOT="${GODOT:-${HOME}/.local/bin/godot-4.7}"
 
 [[ -x "$GODOT" ]] || { printf 'Error: godot not found at %s (set GODOT)\n' "$GODOT" >&2; exit 1; }
 
