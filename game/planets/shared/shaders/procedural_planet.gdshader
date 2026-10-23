@@ -3,6 +3,8 @@ render_mode diffuse_burley, specular_schlick_ggx;
 
 uniform int material_profile = 0;
 uniform float planet_radius = 1.0;
+// Grain textures are sized on this radius instead of the planet's, so they keep their size in metres.
+uniform float detail_radius = 1.0;
 uniform vec3 sun_direction = vec3(0.5, 0.4, 0.75);
 uniform vec2 height_min_max = vec2(1.0);
 uniform float ocean_level = 1.0;
@@ -185,7 +187,7 @@ void fragment() {
 		SPECULAR = 0.18;
 	} else if (material_profile == 0) {
 		vec4 source_noise = triplanar(terrain_vertex / planet_radius, mesh_normal, earth_noise_scale, earth_noise);
-		vec4 detail_noise = triplanar(terrain_vertex / planet_radius, mesh_normal, earth_noise_scale_detail, earth_noise);
+		vec4 detail_noise = triplanar(terrain_vertex / detail_radius, mesh_normal, earth_noise_scale_detail, earth_noise);
 		steepness = remap01(steepness, 0.0, 0.65);
 		float shore_height = mix(height_min_max.x, 1.0, ocean_level);
 		float above_shore_height01 = remap01(terrain_height, shore_height, height_min_max.y);
@@ -264,8 +266,8 @@ void fragment() {
 		// metallic moon just renders black here.
 		METALLIC = 0.0;
 		SPECULAR = moon_specular;
-		vec3 normal_flat = object_to_tangent(triplanar_normal(terrain_vertex / planet_radius, mesh_normal, 20.0, moon_normal_flat), mesh_normal, terrain_tangent);
-		vec3 normal_steep = object_to_tangent(triplanar_normal(terrain_vertex / planet_radius, mesh_normal, 20.0, moon_normal_steep), mesh_normal, terrain_tangent);
+		vec3 normal_flat = object_to_tangent(triplanar_normal(terrain_vertex / detail_radius, mesh_normal, 20.0, moon_normal_flat), mesh_normal, terrain_tangent);
+		vec3 normal_steep = object_to_tangent(triplanar_normal(terrain_vertex / detail_radius, mesh_normal, 20.0, moon_normal_steep), mesh_normal, terrain_tangent);
 		float normal_blend = mix(source_noise.r, source_noise.g, blend(0.0, 2.0, terrain_data.z));
 		vec3 flat_and_steep_normal = mix(normal_flat, normal_steep, normal_blend);
 		vec3 terrain_normal_map = mix(flat_and_steep_normal, normal_steep, steepness);

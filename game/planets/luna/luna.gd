@@ -8,6 +8,7 @@ func configure_planet(config: PlanetConfig) -> void:
 	config.shape_profile = ShapeProfileScript.MOON
 	config.surface.material_profile = ShapeProfileScript.MOON
 	config.radius = 11.5
+	config.surface.detail_radius = 11.5
 	config.surface_gravity = 3.0
 	config.rng_seed = 29017
 	config.ocean.enabled = false

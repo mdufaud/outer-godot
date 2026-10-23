@@ -28,6 +28,7 @@ var body_id: StringName = &"Planet"
 var quality_override: StringName = &""
 var shape_profile := PlanetShapeProfileScript.EARTH
 var surface_style: StringName = &"terrain"
+var surface_detail_radius := 0.0
 var core_radius := 0.0
 var influence_scale := 30.0
 var rng_seed := 0
@@ -104,6 +105,7 @@ func _apply_config(next_config: PlanetConfig) -> void:
 	perturb_strength = config.perturb_strength
 	quality_profile = config.quality_profile
 	surface_style = config.surface.style
+	surface_detail_radius = config.surface.detail_radius
 	material_profile = config.surface.material_profile
 	has_ocean = config.ocean.enabled
 	ocean_level = config.ocean.level
@@ -426,7 +428,7 @@ func get_nearby_land_direction(origin: Vector3) -> Vector3:
 
 
 func _build_terrain() -> void:
-	var profile := PlanetQualityScript.get_profile(quality_profile)
+	var profile := PlanetQualityScript.get_resolutions(quality_profile, radius)
 	for subdivisions in profile.lod:
 		_lod_resolutions.append(int(subdivisions))
 	_terrain = MeshInstance3D.new()
@@ -462,7 +464,7 @@ func _build_terrain() -> void:
 
 
 func _build_collision() -> void:
-	var profile := PlanetQualityScript.get_profile(quality_profile)
+	var profile := PlanetQualityScript.get_resolutions(quality_profile, radius)
 	var resolution := int(profile.collision)
 	var job := {"kind": "collision", "resolution": resolution, "phase": "topology"}
 	_collision_mesh = PlanetCacheScript.load_mesh("collision", resolution, shape_profile, rng_seed, _core_radius(), perturb_strength)
@@ -796,6 +798,7 @@ func _set_terrain_properties(average_biome: float) -> void:
 	if surface_style != "terrain":
 		return
 	_surface_material.set_shader_parameter("planet_radius", radius)
+	_surface_material.set_shader_parameter("detail_radius", surface_detail_radius)
 	_surface_material.set_shader_parameter("height_min_max", _terrain_height_minmax)
 	if material_profile == PlanetShapeProfileScript.ASTEROID:
 		_surface_material.set_shader_parameter("material_profile", 2)

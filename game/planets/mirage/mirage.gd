@@ -20,6 +20,7 @@ func configure_planet(config: PlanetConfig) -> void:
 	config.shape_profile = ShapeProfileScript.MIRAGE
 	config.surface.material_profile = ShapeProfileScript.MIRAGE
 	config.radius = 34.0
+	config.surface.detail_radius = 34.0
 	config.surface_gravity = 7.0
 	config.rng_seed = 4711
 	config.perturb_strength = 0.03

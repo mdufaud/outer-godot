@@ -45,4 +45,5 @@ static func create_config() -> PlanetConfig:
 
 	config.surface.style = &"terrain"
 	config.surface.material_profile = PlanetShapeProfileScript.EARTH
+	config.surface.detail_radius = 46.0
 	return config

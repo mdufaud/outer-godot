@@ -23,6 +23,7 @@ func configure_planet(config: PlanetConfig) -> void:
 	config.shape_profile = ShapeProfileScript.WATCHFUL_EYE
 	config.surface.material_profile = ShapeProfileScript.WATCHFUL_EYE
 	config.radius = 20.7
+	config.surface.detail_radius = 20.7
 	config.surface_gravity = 8.0
 	config.rng_seed = 7
 	config.ocean.enabled = false

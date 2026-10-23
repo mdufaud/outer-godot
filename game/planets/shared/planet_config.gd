@@ -36,6 +36,8 @@ class AtmosphereConfig extends RefCounted:
 class SurfaceConfig extends RefCounted:
 	var style: StringName = &"terrain"
 	var material_profile := 0
+	# Grain textures are sized as on a planet of this radius, so they keep their size in metres.
+	var detail_radius := 0.0
 
 
 class WeatherConfig extends RefCounted:

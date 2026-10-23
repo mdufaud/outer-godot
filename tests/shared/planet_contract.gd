@@ -7,6 +7,7 @@ extends RefCounted
 
 const TestWorldScript := preload("res://tests/shared/test_world.gd")
 const PlanetGeneratorScript := preload("res://game/planets/shared/planet_generator.gd")
+const PlanetQualityScript := preload("res://game/planets/shared/planet_quality.gd")
 
 # Degenerate or runaway terrain: a factor near zero collapses the planet into its core, a huge one
 # turns it into a spike ball. Deformed bodies legitimately sit far from 1.0, so the window is wide.
@@ -18,6 +19,7 @@ static func run(tree: SceneTree, config: PlanetConfig, report: RefCounted, label
 	var body := TestWorldScript.spawn_body(tree, config)
 	var directions := TestWorldScript.sphere_directions()
 	_test_config_sanity(config, report, label)
+	_test_mesh_density(config, report, label)
 	_test_terrain(body, config, report, label)
 	_test_determinism(config, report, label)
 	_test_ocean(body, directions, report, label)
@@ -31,6 +33,21 @@ static func _test_config_sanity(config: PlanetConfig, report: RefCounted, label:
 	report.expect(config.surface_gravity > 0.0, "%s: surface gravity must be positive" % label)
 	report.expect(config.core_radius >= 0.0 and config.core_radius < config.radius, "%s: core radius must sit inside the planet" % label)
 	report.expect(config.influence_scale > 1.0, "%s: influence radius must reach past the surface" % label)
+	report.expect(config.surface.detail_radius > 0.0, "%s: grain textures need a positive detail radius" % label)
+
+
+# Facet size follows the radius: a body up to the reference size is never coarser than the reference
+# planet, and no body costs more than its quality tier.
+static func _test_mesh_density(config: PlanetConfig, report: RefCounted, label: String) -> void:
+	for profile_name in PlanetQualityScript.PROFILES:
+		var tier: Dictionary = PlanetQualityScript.get_profile(profile_name)
+		var resolutions := PlanetQualityScript.get_resolutions(profile_name, config.radius)
+		var near := int(resolutions.lod[0])
+		var collision := int(resolutions.collision)
+		report.expect(near <= int(tier.lod[0]) and collision <= int(tier.collision), "%s: %s meshes exceed the tier budget" % [label, profile_name])
+		if config.radius <= PlanetQualityScript.REFERENCE_RADIUS:
+			report.expect(config.radius / near <= PlanetQualityScript.REFERENCE_RADIUS / int(tier.lod[0]) + 0.0001, "%s: %s close mesh coarser than the reference planet" % [label, profile_name])
+			report.expect(config.radius / collision <= PlanetQualityScript.REFERENCE_RADIUS / int(tier.collision) + 0.0001, "%s: %s collider coarser than the reference planet" % [label, profile_name])
 
 
 static func _test_terrain(body: PlanetBody, config: PlanetConfig, report: RefCounted, label: String) -> void:
