@@ -81,9 +81,14 @@ func _init() -> void:
 
 	var min_gap := {}
 	var steps := int(hours * 3600.0 / STEP)
-	for s in steps:
-		CelestialSystem.step_simulation(state, velocities, pair_mu, STEP)
-		if s % SAMPLE_INTERVAL != 0:
+	var done := 0
+	while done < steps:
+		var chunk := 1 if done == 0 else mini(SAMPLE_INTERVAL, steps - done)
+		var advanced := CelestialSystem.advance(state, velocities, pair_mu, STEP, chunk)
+		state = advanced[0]
+		velocities = advanced[1]
+		done += chunk
+		if (done - 1) % SAMPLE_INTERVAL != 0:
 			continue
 		var sun_position := CelestialSystem.read_state(state, 0)
 		for i in names.size():

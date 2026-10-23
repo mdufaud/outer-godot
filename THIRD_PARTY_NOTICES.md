@@ -36,6 +36,14 @@ Copyright (c) 2022 Athillion Studios
 
 Distributed under the MIT License reproduced above.
 
+## godot-cpp
+
+The native library in `game/native/bin/` links godot-cpp (`native/godot-cpp`).
+
+Copyright (c) 2017-present Godot Engine contributors.
+
+Distributed under the MIT License reproduced above.
+
 ## Freesound audio
 
 - `assets/audio/ocean_waves.wav`: "Ocean Waves.wav" by Noted451,

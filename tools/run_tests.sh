@@ -8,6 +8,7 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 GODOT="${GODOT:-${HOME}/.local/bin/godot-4.7}"
 
 [[ -x "$GODOT" ]] || { printf 'Error: godot not found at %s (set GODOT)\n' "$GODOT" >&2; exit 1; }
+GODOT="$GODOT" "${PROJECT_DIR}/native/build.sh" || { printf 'Error: native build failed\n' >&2; exit 1; }
 
 # Godot leaks a handful of RIDs and dummy resources on every headless exit; documented noise.
 NOISE='RID allocations of type|resources still in use at exit|ObjectDB instances leaked|Pages in use exist at exit|Leaked instance dependency'

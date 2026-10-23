@@ -12,3 +12,5 @@ tests/*
 !tests/shared/**
 .claude
 tmp/
+native/.sconsign.dblite
+native/src/*.os

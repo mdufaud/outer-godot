@@ -136,9 +136,9 @@ func _physics_process(delta: float) -> void:
 		return
 	var scaled_delta := delta * _time_multiplier
 	var steps := maxi(1, int(ceil(scaled_delta / MAX_SUBSTEP)))
-	var step := scaled_delta / float(steps)
-	for _index in steps:
-		step_simulation(_positions, _velocities, _pair_mu, step)
+	var state := advance(_positions, _velocities, _pair_mu, scaled_delta / float(steps), steps)
+	_positions = state[0]
+	_velocities = state[1]
 	_binary_angle = fposmod(_binary_angle + _binary_angular_speed * scaled_delta, TAU)
 	_publish_states()
 
@@ -183,6 +183,15 @@ func _publish_states() -> void:
 		var offset: Vector3 = _binary_offsets[index].rotated(Vector3.UP, _binary_angle)
 		var spin := Vector3.UP.cross(offset) * _binary_angular_speed
 		_binary_bodies[index].set_orbital_state(barycenter + offset, (barycenter_velocity + spin) * _time_multiplier)
+
+
+static func advance(positions: PackedFloat64Array, velocities: PackedFloat64Array, pair_mu: Array[PackedFloat64Array], delta: float, steps: int) -> Array:
+	var kernel := Native.kernel(&"NBodyKernel")
+	if kernel != null:
+		return kernel.advance(positions, velocities, pair_mu, delta, steps, MIN_SEPARATION)
+	for _index in steps:
+		step_simulation(positions, velocities, pair_mu, delta)
+	return [positions, velocities]
 
 
 static func step_simulation(positions: PackedFloat64Array, velocities: PackedFloat64Array, pair_mu: Array[PackedFloat64Array], delta: float) -> void:

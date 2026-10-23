@@ -36,6 +36,7 @@ var _ejecta_craters: Array[Vector4] = []
 var _shading_settings_bytes := PackedByteArray()
 var _moon_points_bytes := PackedByteArray()
 var _ejecta_craters_bytes := PackedByteArray()
+var _sampler: Object
 var _state := {"initialized": false, "busy": false, "error": "", "result": PackedFloat32Array(), "shading_result": PackedFloat32Array(), "perturb_result": PackedVector3Array()}
 var _pending_positions := PackedByteArray()
 var _pending_count := 0
@@ -74,6 +75,9 @@ func _init(profile_id: int, seed: int) -> void:
 	_height_kind = PlanetShapeProfileScript.height_kind(profile_id)
 	_seed = seed
 	_build_settings()
+	_sampler = Native.kernel(&"PlanetSampler")
+	if _sampler != null:
+		_sampler.setup(_native_state())
 
 
 func initialize() -> void:
@@ -161,6 +165,8 @@ func get_error() -> String:
 
 
 func sample_factor(direction: Vector3) -> float:
+	if _sampler != null:
+		return _sampler.sample_factor(direction)
 	match _height_kind:
 		MOON:
 			return _moon_factor(direction)
@@ -181,9 +187,51 @@ func sample_factor(direction: Vector3) -> float:
 
 
 func sample_shading_data(direction: Vector3) -> Vector4:
+	if _sampler != null:
+		return _sampler.sample_shading_data(direction)
 	if _height_kind == MOON:
 		return _moon_shading_data(direction)
 	return _earth_shading_data(direction)
+
+
+func _native_state() -> Dictionary:
+	var crater_centres := PackedVector3Array()
+	var crater_radii := PackedFloat64Array()
+	var crater_floors := PackedFloat64Array()
+	var crater_smoothness := PackedFloat64Array()
+	var crater_influences := PackedFloat64Array()
+	for crater in _craters:
+		crater_centres.append(crater.centre)
+		crater_radii.append(crater.radius)
+		crater_floors.append(crater.floor)
+		crater_smoothness.append(crater.smoothness)
+		crater_influences.append(crater.influence)
+	var spike_directions := PackedVector3Array()
+	var spike_heights := PackedFloat64Array()
+	var spike_sharpness := PackedFloat64Array()
+	var spike_tapers := PackedFloat64Array()
+	for spike in _spikes:
+		spike_directions.append(spike.direction)
+		spike_heights.append(spike.height)
+		spike_sharpness.append(spike.sharpness)
+		spike_tapers.append(spike.taper)
+	return {
+		"height_kind": _height_kind,
+		"settings": PackedVector4Array(_settings),
+		"shading_settings": PackedVector4Array(_shading_settings),
+		"moon_points": PackedVector4Array(_moon_points),
+		"ejecta_craters": PackedVector4Array(_ejecta_craters),
+		"crater_centres": crater_centres,
+		"crater_radii": crater_radii,
+		"crater_floors": crater_floors,
+		"crater_smoothness": crater_smoothness,
+		"crater_influences": crater_influences,
+		"crater_cell_size": _crater_cell_size,
+		"spike_directions": spike_directions,
+		"spike_heights": spike_heights,
+		"spike_sharpness": spike_sharpness,
+		"spike_tapers": spike_tapers,
+	}
 
 
 func _initialize_render() -> void:
