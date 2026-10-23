@@ -43,6 +43,11 @@ const LURE_MAX_X := 12.0
 # The snout reaches the stalk's z too, but only the stalk rises above this.
 const LURE_MIN_Y := 100.0
 
+# Each eye is its own closed shell around this centre, mirrored in x.
+const EYE_CENTRE := Vector3(28.5, 48.7, 40.1)
+const BULB_CENTRE := Vector3(0.0, 117.5, 124.4)
+const BULB_RADIUS := 7.0
+
 const BONE_HEAD := 0
 const BONE_JAW := 1
 const BONE_LURE := 2
@@ -65,7 +70,9 @@ func _initialize() -> void:
 
 	var weld := _weld(vertices)
 	var adjacency := _adjacency(weld.map, weld.count, indices)
-	var jaw := _jaw_weight(weld, adjacency, vertices)
+	var components := _components(adjacency, weld.count)
+	var jaw := _jaw_weight(weld, adjacency, components, vertices)
+	arrays[Mesh.ARRAY_COLOR] = _feature_masks(vertices, weld, components)
 
 	var joints := _joint_positions(vertices, jaw)
 	arrays[Mesh.ARRAY_BONES] = PackedInt32Array()
@@ -150,7 +157,7 @@ func _adjacency(map: PackedInt32Array, count: int, indices: PackedInt32Array) ->
 # Flood fill from under the chin, refusing to cross the hinge plane, then relax
 # the hard selection so the throat skin stretches into the gape instead of
 # tearing away from the skull along one ring of triangles.
-func _jaw_weight(weld: Dictionary, adjacency: Array, vertices: PackedVector3Array) -> PackedFloat32Array:
+func _jaw_weight(weld: Dictionary, adjacency: Array, components: Dictionary, vertices: PackedVector3Array) -> PackedFloat32Array:
 	var map := weld.map as PackedInt32Array
 	var count := weld.count as int
 
@@ -159,7 +166,6 @@ func _jaw_weight(weld: Dictionary, adjacency: Array, vertices: PackedVector3Arra
 	for i in vertices.size():
 		welded_position[map[i]] = vertices[i]
 
-	var components := _components(adjacency, count)
 	var body := components.largest as int
 	print("components=%d body=%d verts=%d" % [components.count, body, (components.members[body] as PackedInt32Array).size()])
 
@@ -203,6 +209,36 @@ func _jaw_weight(weld: Dictionary, adjacency: Array, vertices: PackedVector3Arra
 	for i in vertices.size():
 		per_vertex[i] = weight[map[i]]
 	return per_vertex
+
+
+# Red marks the eyes and green the lantern bulb, so the skin shader can show
+# them alone while the rest of the body is still hidden.
+func _feature_masks(vertices: PackedVector3Array, weld: Dictionary, components: Dictionary) -> PackedColorArray:
+	var map := weld.map as PackedInt32Array
+	var label := components.label as PackedInt32Array
+	var sums := PackedVector3Array()
+	sums.resize(components.count)
+	var counts := PackedInt32Array()
+	counts.resize(components.count)
+	for i in vertices.size():
+		var component := label[map[i]]
+		sums[component] += vertices[i]
+		counts[component] += 1
+
+	var colors := PackedColorArray()
+	colors.resize(vertices.size())
+	var eyes := 0
+	var bulb := 0
+	for i in vertices.size():
+		var component := label[map[i]]
+		var centre := sums[component] / float(counts[component])
+		var eye := Vector3(absf(centre.x), centre.y, centre.z).distance_to(EYE_CENTRE) < 1.5
+		var lantern := vertices[i].distance_to(BULB_CENTRE) <= BULB_RADIUS
+		colors[i] = Color(float(eye), float(lantern), 0.0, 1.0)
+		eyes += int(eye)
+		bulb += int(lantern)
+	print("eye vertices=%d bulb vertices=%d" % [eyes, bulb])
+	return colors
 
 
 func _components(adjacency: Array, count: int) -> Dictionary:

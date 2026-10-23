@@ -15,6 +15,12 @@ uniform sampler2D skin_normal : hint_normal, filter_linear_mipmap;
 uniform sampler2D skin_glow : source_color, filter_linear_mipmap;
 uniform float presence : hint_range(0.0, 1.0) = 0.0;
 uniform float flash : hint_range(0.0, 1.0) = 0.0;
+// The arrival is staged off the baked vertex masks (red = eyes, green = bulb):
+// the lantern alone, then the eyes, while presence dithers the body in.
+uniform float lure_glow : hint_range(0.0, 1.0) = 0.0;
+uniform float eye_glow : hint_range(0.0, 1.0) = 0.0;
+uniform vec3 eye_color : source_color = vec3(1.0, 0.04, 0.02);
+uniform float eye_energy = 6.0;
 uniform vec3 rim_color : source_color = vec3(0.16, 0.045, 0.30);
 uniform float rim_power : hint_range(1.0, 12.0) = 4.4;
 // Far out it is a silhouette against the galaxy; up close the lantern and the
@@ -25,9 +31,16 @@ uniform float rim_power : hint_range(1.0, 12.0) = 4.4;
 // daylit sky and the creature crossing it reads as a cloud. Everything that
 // makes the shape legible is edge: the rim, the lantern and the bolts.
 uniform float dark_albedo : hint_range(0.0, 1.0) = 0.03;
-uniform float lit_albedo : hint_range(0.0, 1.0) = 0.16;
+uniform float lit_albedo : hint_range(0.0, 1.0) = 0.08;
 
 void fragment() {
+	float eye = COLOR.r * eye_glow;
+	float bulb = COLOR.g * lure_glow;
+	// Screen-door fade: no transparent pass for a skinned mesh this size.
+	float dither = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))));
+	if (eye <= 0.0 && bulb <= 0.0 && dither >= presence) {
+		discard;
+	}
 	vec4 base = texture(skin_albedo, UV);
 	ALBEDO = base.rgb * mix(dark_albedo, lit_albedo, presence);
 	NORMAL_MAP = texture(skin_normal, UV).rgb;
@@ -41,5 +54,6 @@ void fragment() {
 	// the only thing visible while the body is still a hole in the sky.
 	vec3 lantern = texture(skin_glow, UV).rgb;
 	EMISSION = rim_color * rim * (0.22 + presence * 0.92) * (1.0 + flash * 2.1)
-		+ lantern * (1.4 + flash * 3.0);
+		+ lantern * (1.4 + flash * 3.0) * lure_glow
+		+ eye_color * eye * eye_energy;
 }

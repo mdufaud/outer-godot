@@ -11,7 +11,7 @@ extends SceneTree
 # so no body ever boots and the creature is never registered.
 
 const STEP := 0.25
-const END := 42.0
+const END := 90.0
 
 var _leviathan: Leviathan
 

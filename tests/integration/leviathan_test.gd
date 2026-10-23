@@ -55,21 +55,29 @@ func _run() -> void:
 		quit(1)
 
 
+# Ten seconds of the lantern alone, ten more with the red eyes beside it, then
+# the body fades in.
 func _test_presence() -> void:
-	_expect(is_equal_approx(LeviathanScript.presence_at(0.0), 0.0), "Must be invisible before it is summoned")
-	_expect(LeviathanScript.presence_at(LeviathanScript.FADE_IN_DURATION * 0.5) > 0.0, "Must be fading in halfway through the fade")
-	_expect(LeviathanScript.presence_at(LeviathanScript.FADE_IN_DURATION * 0.5) < 1.0, "Must not be fully solid halfway through the fade")
-	_expect(is_equal_approx(LeviathanScript.presence_at(LeviathanScript.FADE_IN_DURATION), 1.0), "Must be solid once the fade ends")
+	_expect(is_equal_approx(LeviathanScript.lure_glow_at(0.0), 0.0), "The lantern must light up after the summon, not before")
+	_expect(is_equal_approx(LeviathanScript.lure_glow_at(5.0), 1.0), "The lantern must show first")
+	_expect(is_equal_approx(LeviathanScript.eye_glow_at(9.9), 0.0), "The eyes must stay dark while the lantern is alone")
+	_expect(is_equal_approx(LeviathanScript.presence_at(9.9), 0.0), "The body must stay hidden while the lantern is alone")
+	_expect(is_equal_approx(LeviathanScript.eye_glow_at(15.0), 1.0), "The eyes must open after ten seconds")
+	_expect(is_equal_approx(LeviathanScript.lure_glow_at(15.0), 1.0), "The lantern must stay lit beside the eyes")
+	_expect(is_equal_approx(LeviathanScript.presence_at(19.9), 0.0), "The body must stay hidden while only the eyes and lantern show")
+	_expect(LeviathanScript.presence_at(24.5) > 0.0, "Must be fading in halfway through the fade")
+	_expect(LeviathanScript.presence_at(24.5) < 1.0, "Must not be fully solid halfway through the fade")
+	_expect(is_equal_approx(LeviathanScript.presence_at(29.0), 1.0), "Must be solid once the fade ends")
 	_expect(is_equal_approx(LeviathanScript.presence_at(600.0), 1.0), "Presence must not overshoot")
 
 
 func _test_distance() -> void:
 	for feed: float in [MIRAGE_DISTANCE, TERRA_DISTANCE, CYCLOPS_DISTANCE]:
 		_expect(is_equal_approx(LeviathanScript.distance_at(0.0, feed), LeviathanScript.START_DISTANCE), "Must hold station while fading in")
-		_expect(is_equal_approx(LeviathanScript.distance_at(LeviathanScript.FADE_IN_DURATION, feed), LeviathanScript.START_DISTANCE), "Must not move before the fade completes")
-		var end_time := LeviathanScript.FADE_IN_DURATION + LeviathanScript.dive_duration(feed)
+		_expect(is_equal_approx(LeviathanScript.distance_at(LeviathanScript.HOLD_DURATION, feed), LeviathanScript.START_DISTANCE), "Must not move before the fade completes")
+		var end_time := LeviathanScript.HOLD_DURATION + LeviathanScript.dive_duration(feed)
 		var previous := LeviathanScript.START_DISTANCE
-		var second := LeviathanScript.FADE_IN_DURATION + 1.0
+		var second := LeviathanScript.HOLD_DURATION + 1.0
 		while second < end_time:
 			var distance := LeviathanScript.distance_at(second, feed)
 			_expect(distance < previous, "Approach must close in at %.0f s for a player %.0f from the sun" % [second, feed])
@@ -90,7 +98,7 @@ func _test_distance() -> void:
 # player so they watch the maw close on them.
 func _test_fast_then_slow() -> void:
 	for feed: float in [MIRAGE_DISTANCE, TERRA_DISTANCE, CYCLOPS_DISTANCE]:
-		var rush_start := LeviathanScript.FADE_IN_DURATION
+		var rush_start := LeviathanScript.HOLD_DURATION
 		var early_speed := (LeviathanScript.distance_at(rush_start, feed) - LeviathanScript.distance_at(rush_start + 3.0, feed)) / 3.0
 		_expect(early_speed > LeviathanScript.FEED_SPEED * 5.0, "The rush must be fast far out, %.0f m/s for a player %.0f out" % [early_speed, feed])
 		var step := 0.05
@@ -209,6 +217,14 @@ func _test_visual_contract() -> void:
 			"The anglerfish must carry the UVs its baked skin is painted in")
 		_expect(arrays[Mesh.ARRAY_TANGENT] != null,
 			"The anglerfish must carry tangents or its normal map is meaningless")
+		var eyes := 0
+		var bulb := 0
+		if arrays[Mesh.ARRAY_COLOR] != null:
+			for mask in arrays[Mesh.ARRAY_COLOR] as PackedColorArray:
+				eyes += int(mask.r > 0.5)
+				bulb += int(mask.g > 0.5)
+		_expect(eyes > 0 and bulb > 0,
+			"The bake must mask the eyes and the lantern bulb for the staged arrival, saw %d and %d" % [eyes, bulb])
 		for parameter in [&"skin_albedo", &"skin_normal", &"skin_glow"]:
 			_expect(leviathan._body_material.get_shader_parameter(parameter) != null,
 				"The skin shader must be handed the baked %s map" % parameter)
@@ -245,7 +261,7 @@ func _test_blackout_keeps_leviathan_visible() -> void:
 	leviathan._roar = SilentRoar.new()
 	original_roar.free()
 	leviathan._feed_distance = TERRA_DISTANCE
-	leviathan._elapsed = LeviathanScript.FADE_IN_DURATION + LeviathanScript.dive_duration(TERRA_DISTANCE) * 0.6
+	leviathan._elapsed = LeviathanScript.HOLD_DURATION + LeviathanScript.dive_duration(TERRA_DISTANCE) * 0.6
 	leviathan._direction = Vector3.FORWARD
 	var initial_distance := LeviathanScript.distance_at(leviathan._elapsed, TERRA_DISTANCE)
 	var initial_position := sun.global_position + leviathan._direction * initial_distance
@@ -256,7 +272,7 @@ func _test_blackout_keeps_leviathan_visible() -> void:
 	leviathan._update_blackout(LeviathanScript.BLACKOUT_DURATION * 0.5)
 	_expect(leviathan._visual.visible, "The leviathan must stay visible during the blackout")
 	_expect(leviathan._storm.visible, "The maw storm must stay visible during the blackout")
-	_expect(leviathan._elapsed > LeviathanScript.FADE_IN_DURATION + LeviathanScript.dive_duration(TERRA_DISTANCE) * 0.6,
+	_expect(leviathan._elapsed > LeviathanScript.HOLD_DURATION + LeviathanScript.dive_duration(TERRA_DISTANCE) * 0.6,
 		"The leviathan must keep advancing during the blackout")
 	_expect(not leviathan.global_position.is_equal_approx(initial_position),
 		"The leviathan position must keep changing during the blackout")

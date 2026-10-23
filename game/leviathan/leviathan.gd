@@ -49,7 +49,14 @@ const THROAT_DEPTH := (MODEL_MAW_Z - MODEL_STORM_CENTRE.z) * MODEL_SCALE
 
 const START_DISTANCE := 42000.0
 const DEVOUR_START_DISTANCE := 12000.0
+# The arrival is staged: the lantern alone, then the red eyes beside it, then
+# the body fades in around them, and only then does it dive.
+const LURE_ALONE_DURATION := 10.0
+const EYES_ALONE_DURATION := 10.0
+const GLOW_RISE := 2.5
 const FADE_IN_DURATION := 9.0
+const REVEAL_START := LURE_ALONE_DURATION + EYES_ALONE_DURATION
+const HOLD_DURATION := REVEAL_START + FADE_IN_DURATION
 # The rush covers the empty back of the galaxy with a speed proportional to the
 # distance left; once that drops to FEED_SPEED the creature creeps the rest of
 # the way, FEED_LEAD before the player, so they watch the maw close in.
@@ -249,7 +256,15 @@ func get_dread_factor() -> float:
 
 
 static func presence_at(elapsed: float) -> float:
-	return clampf(elapsed / FADE_IN_DURATION, 0.0, 1.0)
+	return clampf((elapsed - REVEAL_START) / FADE_IN_DURATION, 0.0, 1.0)
+
+
+static func lure_glow_at(elapsed: float) -> float:
+	return smoothstep(0.0, GLOW_RISE, elapsed)
+
+
+static func eye_glow_at(elapsed: float) -> float:
+	return smoothstep(LURE_ALONE_DURATION, LURE_ALONE_DURATION + GLOW_RISE, elapsed)
 
 
 # Holds station at the back of the galaxy while it fades in, rushes in, then
@@ -257,7 +272,7 @@ static func presence_at(elapsed: float) -> float:
 # sun at the summon) down to END_DISTANCE. Measured to the maw front, which
 # ends a throat's depth past the sun so the sun goes down the throat.
 static func distance_at(elapsed: float, feed_distance: float) -> float:
-	var time := elapsed - FADE_IN_DURATION
+	var time := elapsed - HOLD_DURATION
 	if time <= 0.0:
 		return START_DISTANCE
 	var rush_target := minf(feed_distance + FEED_LEAD, START_DISTANCE)
@@ -311,7 +326,7 @@ func _process(delta: float) -> void:
 	var sun := get_tree().get_first_node_in_group("sun") as Sun
 	if sun == null:
 		return
-	if _state == STATE_FADE_IN and _elapsed > FADE_IN_DURATION:
+	if _state == STATE_FADE_IN and _elapsed > HOLD_DURATION:
 		_state = STATE_APPROACH
 	_roar.set_dread(presence_at(_elapsed))
 	var distance := _advance(delta, sun)
@@ -336,6 +351,8 @@ func _advance(delta: float, sun: Sun) -> float:
 	var distance := distance_at(_elapsed, _feed_distance)
 	var maw_open := maw_open_at(distance)
 	_body_material.set_shader_parameter("presence", presence)
+	_body_material.set_shader_parameter("lure_glow", lure_glow_at(_elapsed))
+	_body_material.set_shader_parameter("eye_glow", eye_glow_at(_elapsed))
 	_update_rig(presence, maw_open)
 	_update_storm(delta, maw_open)
 	var maw_position := sun.global_position + _direction * distance
@@ -455,6 +472,8 @@ func _reset_state() -> void:
 	_blackout.color.a = 0.0
 	_body_material.set_shader_parameter("presence", 0.0)
 	_body_material.set_shader_parameter("flash", 0.0)
+	_body_material.set_shader_parameter("lure_glow", 0.0)
+	_body_material.set_shader_parameter("eye_glow", 0.0)
 	_body_pivot.rotation = Vector3.ZERO
 	_rig.rest()
 	_lure_light.position = model_to_pivot(MODEL_LURE)
