@@ -22,6 +22,10 @@ const ATMOSPHERE_DITHER_STRENGTH := 0.3
 const ATMOSPHERE_DITHER_SCALE := 3.89
 const ATMOSPHERE_SCATTERING_POINTS := 10
 const MAX_WEATHER_CONTACTS := 9
+const LOD_APPARENT_RADII: Array[float] = [0.15, 0.045]
+# A switch must clear the threshold by this fraction, so a camera parked on it does not flip meshes.
+const LOD_HYSTERESIS := 0.1
+const LOD_FADE_TIME := 0.5
 
 var config: PlanetConfig
 var body_id: StringName = &"Planet"
@@ -61,6 +65,8 @@ var weather_enabled := false
 var weather_contact_count := 0
 
 var _terrain: MeshInstance3D
+var _terrain_outgoing: MeshInstance3D
+var _lod_fade := 1.0
 var _lod_meshes: Array[ArrayMesh] = []
 var _collision_mesh: ArrayMesh
 var _surface_material: ShaderMaterial
@@ -182,6 +188,7 @@ func _process(delta: float) -> void:
 	_poll_boot()
 	_poll_atmosphere_lut()
 	_update_lod()
+	_update_lod_fade(delta)
 	_update_lighting()
 
 
@@ -447,6 +454,10 @@ func _build_terrain() -> void:
 			_surface_material.shader = ProceduralPlanetShader
 	_terrain.material_override = _surface_material
 	add_child(_terrain)
+	_terrain_outgoing = MeshInstance3D.new()
+	_terrain_outgoing.material_override = _surface_material
+	_terrain_outgoing.visible = false
+	_terrain.add_child(_terrain_outgoing)
 	var cached_meshes: Array[ArrayMesh] = []
 	for resolution in _lod_resolutions:
 		var cached_mesh := PlanetCacheScript.load_mesh("terrain", resolution, shape_profile, rng_seed, _core_radius(), perturb_strength)
@@ -658,12 +669,12 @@ func _update_lod() -> void:
 	if camera == null:
 		return
 	var apparent_radius := radius / maxf(camera.global_position.distance_to(global_position), 0.01)
-	if apparent_radius > 0.15:
-		_set_lod(0)
-	elif apparent_radius > 0.045:
-		_set_lod(1)
-	else:
-		_set_lod(2)
+	var index := 0
+	for boundary in LOD_APPARENT_RADII.size():
+		var margin := 1.0 - LOD_HYSTERESIS if _active_lod <= boundary else 1.0 + LOD_HYSTERESIS
+		if apparent_radius <= LOD_APPARENT_RADII[boundary] * margin:
+			index = boundary + 1
+	_set_lod(index)
 
 
 func _set_lod(index: int) -> void:
@@ -672,8 +683,21 @@ func _set_lod(index: int) -> void:
 	var available_index := mini(index, _lod_meshes.size() - 1)
 	if _active_lod == available_index:
 		return
+	if _active_lod >= 0:
+		_terrain_outgoing.mesh = _terrain.mesh
+		_terrain_outgoing.visible = true
+		_lod_fade = 0.0
 	_active_lod = available_index
 	_terrain.mesh = _lod_meshes[available_index]
+
+
+func _update_lod_fade(delta: float) -> void:
+	if not _terrain_outgoing.visible:
+		return
+	_lod_fade = minf(_lod_fade + delta / LOD_FADE_TIME, 1.0)
+	_terrain.set_instance_shader_parameter("lod_dither_band", Vector2(0.0, _lod_fade))
+	_terrain_outgoing.set_instance_shader_parameter("lod_dither_band", Vector2(_lod_fade, 1.0))
+	_terrain_outgoing.visible = _lod_fade < 1.0
 
 
 func _update_lighting() -> void:

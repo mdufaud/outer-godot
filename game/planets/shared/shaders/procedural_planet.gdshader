@@ -89,6 +89,8 @@ varying vec3 terrain_vertex;
 varying vec3 terrain_normal;
 varying vec3 terrain_tangent;
 
+#include "res://game/planets/shared/shaders/lod_dither.gdshaderinc"
+
 float remap01(float value, float minimum, float maximum) {
 	return clamp((value - minimum) / max(maximum - minimum, 0.00001), 0.0, 1.0);
 }
@@ -143,6 +145,7 @@ void vertex() {
 }
 
 void fragment() {
+	lod_dither(FRAGCOORD.xy);
 	vec3 sphere_normal = normalize(terrain_vertex);
 	vec3 mesh_normal = normalize(terrain_normal);
 	float terrain_height = length(terrain_vertex) / max(planet_radius, 0.00001);

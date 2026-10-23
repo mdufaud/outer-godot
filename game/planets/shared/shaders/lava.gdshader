@@ -6,12 +6,14 @@ uniform vec3 glow_color: source_color = vec3(1.0, 0.4, 0.05);
 varying vec3 v_pos;
 
 #include "res://game/shared/shaders/noise.gdshaderinc"
+#include "res://game/planets/shared/shaders/lod_dither.gdshaderinc"
 
 void vertex() {
 	v_pos = VERTEX;
 }
 
 void fragment() {
+	lod_dither(FRAGCOORD.xy);
 	vec3 p = v_pos * 0.12;
 	float crust = fbm(p + vec3(0.0, TIME * 0.02, 0.0), 4, 2.1);
 	float cracks = fbm(p * 2.3 + vec3(TIME * 0.05, 0.0, TIME * 0.03), 4, 2.1);

@@ -6,12 +6,14 @@ uniform vec3 crack_color: source_color = vec3(0.25, 0.5, 0.75);
 varying vec3 v_pos;
 
 #include "res://game/shared/shaders/noise.gdshaderinc"
+#include "res://game/planets/shared/shaders/lod_dither.gdshaderinc"
 
 void vertex() {
 	v_pos = VERTEX;
 }
 
 void fragment() {
+	lod_dither(FRAGCOORD.xy);
 	vec3 p = v_pos * 0.1;
 	float n = fbm(p, 4, 2.1);
 	// thin crack lines: ridged noise
