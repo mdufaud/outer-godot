@@ -43,10 +43,11 @@ const GRAVITY_COLORS := [
 	Color(0.9, 0.55, 1.0, 0.9),
 	Color(1.0, 0.78, 0.3, 0.9),
 ]
-const HINTS_FOOT_KEYS := [["WASD", "Move"], ["Space", "Jump · jetpack"], ["Shift", "Sprint"], ["E", "Interact"], ["Tab", "Map"], ["R", "Respawn"], ["Esc", "Menu"]]
-const HINTS_SHIP_KEYS := [["WASD", "Thrust"], ["Space/Shift", "Up · down"], ["Mouse", "Steer"], ["Z/C", "Roll"], ["X", "Brake"], ["LMB", "Lock"], ["E", "Exit"], ["Esc", "Menu"]]
-const HINTS_FOOT_PAD := [["LS", "Move"], ["RS", "Look"], ["A", "Jump"], ["LT", "Sprint"], ["X", "Interact"], ["View", "Map"], ["Y", "Respawn"], ["Start", "Menu"]]
-const HINTS_SHIP_PAD := [["LS", "Thrust"], ["RS", "Steer"], ["A/LT", "Up · down"], ["LB/RB", "Roll"], ["RT", "Brake"], ["R3", "Lock"], ["X", "Exit"], ["Start", "Menu"]]
+const FLASH_MS := 2200
+const HINTS_FOOT_KEYS := [["WASD", "Move"], ["Space", "Jump · jetpack"], ["Shift", "Sprint"], ["E", "Interact"], ["T", "Call ship"], ["Tab", "Map"], ["R", "Respawn"], ["Esc", "Menu"]]
+const HINTS_SHIP_KEYS := [["WASD", "Thrust"], ["Space/Ctrl", "Up · down"], ["Shift", "Boost"], ["Mouse", "Steer"], ["Z/C", "Roll"], ["X", "Brake · match"], ["LMB", "Lock"], ["T", "Autopilot"], ["V", "Camera"], ["E", "Exit"], ["Esc", "Menu"]]
+const HINTS_FOOT_PAD := [["LS", "Move"], ["RS", "Look"], ["A", "Jump"], ["LT", "Sprint"], ["X", "Interact"], ["Y", "Call ship"], ["View", "Map"], ["Start", "Menu"]]
+const HINTS_SHIP_PAD := [["LS", "Thrust"], ["RS", "Steer"], ["A/B", "Up · down"], ["LT", "Boost"], ["LB/RB", "Roll"], ["RT", "Brake · match"], ["R3", "Lock"], ["Y", "Autopilot"], ["L3", "Camera"], ["X", "Exit"], ["Start", "Menu"]]
 
 var ship: Ship = null
 var tracked_ship: Ship = null
@@ -65,6 +66,10 @@ var _readout: PanelContainer
 var _readout_title: Label
 var _readout_values: Array[Label] = []
 var _readout_vertical_row: Array[Label] = []
+var _readout_status: Label
+var _flash: Label
+var _flash_text := ""
+var _flash_until := 0
 var _prompt: HBoxContainer
 var _prompt_key: Label
 var _prompt_text: Label
@@ -130,6 +135,7 @@ func _build() -> void:
 	_globe.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(_globe)
 	_build_readout()
+	_build_flash()
 	_build_prompt()
 	_build_hints()
 	_build_menu()
@@ -209,8 +215,31 @@ func _build_readout() -> void:
 		if caption == "V/S":
 			_readout_vertical_row = [name_label, value_label]
 	column.add_child(grid)
+	_readout_status = _label("", 11, ACCENT_COLOR)
+	column.add_child(_readout_status)
 	_readout.add_child(column)
 	_root.add_child(_readout)
+
+
+func _build_flash() -> void:
+	_flash = _label(_flash_text, 18)
+	_flash.name = "Flash"
+	_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_flash.add_theme_constant_override("outline_size", _px(4))
+	_flash.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.6))
+	_flash.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_flash.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_flash.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_flash.position.y += 90.0 * ui_scale
+	_flash.visible = Time.get_ticks_msec() < _flash_until
+	_root.add_child(_flash)
+
+
+func flash(text: String) -> void:
+	_flash_text = text
+	_flash_until = Time.get_ticks_msec() + FLASH_MS
+	_flash.text = text
+	_flash.visible = true
 
 
 func _build_prompt() -> void:
@@ -483,6 +512,8 @@ func _process(delta: float) -> void:
 	aimed_body = find_aimed_body(camera, celestial_bodies) if ship != null and camera != null else null
 	if ship == null:
 		locked_body = null
+	if _flash.visible and Time.get_ticks_msec() >= _flash_until:
+		_flash.visible = false
 	_update_readout()
 	var held := Time.get_ticks_msec() - _hints_shown_at < HINT_HOLD_MS
 	_hints_bar.modulate.a = move_toward(_hints_bar.modulate.a, 1.0 if held else HINT_RESTING_ALPHA, delta * 1.5)
@@ -508,6 +539,27 @@ func _update_readout() -> void:
 	_readout_values[2].text = "%+.1f m/s" % (vertical if absf(vertical) >= 0.05 else 0.0)
 	for node in _readout_vertical_row:
 		node.visible = ship != null
+	_readout_status.text = _ship_status()
+	_readout_status.visible = not _readout_status.text.is_empty()
+
+
+func _ship_status() -> String:
+	if ship == null:
+		return ""
+	var parts: Array[String] = []
+	var target := ship.autopilot_target
+	if is_instance_valid(target):
+		var offset := ship.global_position - target.global_position
+		parts.append("AUTOPILOT → %s  %s" % [target.name, _format_distance(maxf(offset.length() - target.get_surface_radius_towards(offset), 0.0))])
+	elif ship.assist_active:
+		parts.append("ASSIST")
+	if ship.boosting:
+		parts.append("BOOST")
+	return "  ·  ".join(parts)
+
+
+func get_target_body() -> CelestialBody:
+	return locked_body if is_instance_valid(locked_body) else aimed_body
 
 
 func draw_navigation(canvas: Control) -> void:

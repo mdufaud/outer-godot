@@ -89,10 +89,13 @@ func _rebuild() -> void:
 	_buttons.clear()
 	if _piloting:
 		_add_button("Up", &"jump", Callable(), 0, 1)
-		_add_button("Down", &"sprint", Callable(), 0, 0)
+		_add_button("Down", &"descend", Callable(), 0, 0)
+		_add_button("Boost", &"sprint", Callable(), 0, 2)
 		_add_button("Brake", &"brake", Callable(), 1, 0)
 		_add_button("Roll R", &"roll_right", Callable(), 2, 0)
 		_add_button("Roll L", &"roll_left", Callable(), 2, 1)
+		_add_button("Auto", &"", main.ship.toggle_autopilot, 2, 2)
+		_add_button("Cam", &"", main.ship.toggle_camera, 3, 0)
 		_add_button("Exit", &"", _exit_ship, 1, 1)
 		_add_button("Map", &"", _toggle_map, 1, 2)
 	else:
@@ -101,6 +104,7 @@ func _rebuild() -> void:
 		_add_button("Interact", &"", _interact, 1, 0)
 		_add_button("Respawn", &"", _respawn, 1, 1)
 		_add_button("Map", &"", _toggle_map, 1, 2)
+		_add_button("Ship", &"", main.recall_ship, 2, 0)
 	queue_redraw()
 
 
@@ -231,6 +235,14 @@ func _button_icon(label: String) -> String:
 			return "▲"
 		"Sprint", "Down":
 			return "▼"
+		"Boost":
+			return "»"
+		"Auto":
+			return "➤"
+		"Cam":
+			return "◉"
+		"Ship":
+			return "⇣"
 		"Interact":
 			return "✦"
 		"Respawn":
@@ -249,9 +261,9 @@ func _button_icon(label: String) -> String:
 
 
 func _button_accent(label: String) -> Color:
-	if label in ["Jump", "Up", "Sprint", "Down"]:
+	if label in ["Jump", "Up", "Sprint", "Down", "Boost"]:
 		return Color(0.35, 0.82, 1.0)
-	if label in ["Interact", "Exit"]:
+	if label in ["Interact", "Exit", "Auto", "Ship"]:
 		return Color(0.45, 1.0, 0.70)
 	if label == "Brake":
 		return Color(1.0, 0.56, 0.36)

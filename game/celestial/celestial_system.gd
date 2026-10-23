@@ -148,11 +148,19 @@ func apply_origin_shift(offset: Vector3) -> void:
 		_positions[index] += offset.x
 		_positions[index + 1] += offset.y
 		_positions[index + 2] += offset.z
+	# FloatingOrigin rewrote each planet from its lagging node position, which drops
+	# the step already sent this tick: send the shifted target again.
+	_publish_states()
 
 
+# Listeners must always read 1x orbital velocities: published speeds are scaled.
 func set_fast_forward_enabled(enabled: bool) -> void:
+	if enabled:
+		get_tree().call_group("fast_time_affected", "set_fast_time_enabled", true)
 	_time_multiplier = FAST_FORWARD_MULTIPLIER if enabled else 1.0
-	get_tree().call_group("fast_time_affected", "set_fast_time_enabled", enabled)
+	_publish_states()
+	if not enabled:
+		get_tree().call_group("fast_time_affected", "set_fast_time_enabled", false)
 
 
 func is_fast_forward_enabled() -> bool:

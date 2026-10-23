@@ -108,18 +108,20 @@ func _boot() -> void:
 	celestial_system.configure(entries, spawned_bodies, sun)
 	add_child(celestial_system)
 
-	var player_direction: Vector3 = earth.get_sunlit_spawn_direction(sun.global_position)
-	var spawn_direction: Vector3 = earth.get_nearby_land_direction(player_direction)
-	var earth_velocity: Vector3 = earth.orbital_velocity
 	_log_boot("Spawning ship and player")
+	var player_direction := earth.get_sunlit_spawn_direction(sun.global_position)
 	ship = SHIP_SCENE.instantiate()
-	ship.position = earth.get_landing_point(spawn_direction, 2.8)
+	# Parked well above the spawn until the colliders answer raycasts.
+	ship.position = earth.global_position + player_direction * (earth.radius * 3.0)
 	add_child(ship)
-	ship.linear_velocity = earth_velocity
+	ship.linear_velocity = earth.orbital_velocity
 
 	player = PLAYER_SCENE.instantiate()
 	add_child(player)
 	spawn_on_planet(earth)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_spawn_controller.place_ship(earth)
 	_build_feedback_overlay()
 	_build_environment_feedback()
 
@@ -482,6 +484,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.is_action_pressed("respawn"):
 		respawn()
+	elif event.is_action_pressed("ship_command") and not player.piloting:
+		recall_ship()
 
 
 func is_loaded() -> bool:
@@ -490,6 +494,10 @@ func is_loaded() -> bool:
 
 func respawn() -> void:
 	_spawn_controller.respawn()
+
+
+func recall_ship() -> void:
+	_spawn_controller.recall_ship()
 
 
 func spawn_on_planet(body: PlanetBody) -> bool:
