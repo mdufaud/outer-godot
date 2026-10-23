@@ -146,11 +146,18 @@ func _boot() -> void:
 
 func _process(delta: float) -> void:
 	var camera := get_viewport().get_camera_3d()
-	_update_lighting(camera)
-	_update_sky(camera)
+	var nearest: PlanetBody = null
+	var reference: CelestialBody = null
+	var weather_source: PlanetBody = null
+	if camera != null:
+		nearest = gravity_service.get_nearest_surface(camera.global_position)
+		reference = nearest if nearest != null else gravity_service.get_strongest(camera.global_position)
+		weather_source = _get_weather_source(camera.global_position)
+	_update_lighting(camera, reference)
+	_update_sky(camera, nearest, weather_source)
 	_update_planet_effects(camera)
-	_update_underwater_state(delta, camera)
-	_update_environment_feedback(delta, camera)
+	_update_underwater_state(delta, camera, reference)
+	_update_environment_feedback(delta, camera, reference, weather_source)
 
 
 func _update_planet_effects(camera: Camera3D) -> void:
@@ -222,20 +229,16 @@ func _set_stream_loop(stream: AudioStream) -> void:
 		(stream as AudioStreamWAV).loop_mode = AudioStreamWAV.LOOP_FORWARD
 
 
-func _update_underwater_state(delta: float, camera: Camera3D) -> void:
+func _update_underwater_state(delta: float, camera: Camera3D, source: CelestialBody) -> void:
 	var target_strength := 0.0
-	if camera != null:
-		var source := gravity_service.get_reference_body(camera.global_position)
-		if source != null:
-			target_strength = BonificationMath.underwater_effect_target(source.get_water_depth(camera.global_position))
+	if source != null:
+		target_strength = BonificationMath.underwater_effect_target(source.get_water_depth(camera.global_position))
 	_underwater_strength = move_toward(_underwater_strength, target_strength, delta * 2.8)
 
 
-func _update_environment_feedback(delta: float, camera: Camera3D) -> void:
+func _update_environment_feedback(delta: float, camera: Camera3D, source: CelestialBody, weather_source: PlanetBody) -> void:
 	if camera == null or _ocean_audio == null:
 		return
-	var source := gravity_service.get_reference_body(camera.global_position)
-	var weather_source := _get_weather_source(camera.global_position)
 	var water_depth := source.get_water_depth(camera.global_position) if source != null else -INF
 	var distance_to_surface := absf(water_depth) if is_finite(water_depth) else INF
 	var ocean_target := 0.0
@@ -306,7 +309,7 @@ func trigger_camera_shake(strength: float, duration: float) -> void:
 		_camera_shake.shake(camera, strength, duration)
 
 
-func _update_lighting(camera: Camera3D) -> void:
+func _update_lighting(camera: Camera3D, source: CelestialBody) -> void:
 	if camera == null or sun == null or sun_light == null:
 		return
 	var ray_direction := (camera.global_position - sun.global_position).normalized()
@@ -315,7 +318,6 @@ func _update_lighting(camera: Camera3D) -> void:
 		up = Vector3.RIGHT
 	sun_light.global_position = camera.global_position
 	sun_light.look_at(camera.global_position + ray_direction, up)
-	var source := gravity_service.get_reference_body(camera.global_position)
 	if source == null or source == sun:
 		fill_light.light_energy = 0.0
 		return
@@ -326,7 +328,7 @@ func _update_lighting(camera: Camera3D) -> void:
 	fill_light.light_energy = 0.08 + (1.0 - direct_visibility) * 0.10
 
 
-func _update_sky(camera: Camera3D) -> void:
+func _update_sky(camera: Camera3D, source: PlanetBody, weather_source: PlanetBody) -> void:
 	if camera == null or _sky_material == null or sun == null:
 		return
 	_sky_material.set_shader_parameter("camera_position", camera.global_position)
@@ -336,10 +338,8 @@ func _update_sky(camera: Camera3D) -> void:
 	# pushes the camera far plane past the sun.
 	var glow_strength := 0.0 if sun.is_exploding() else distant_sun_glow_strength(camera_to_sun.length(), sun.radius)
 	_sky_material.set_shader_parameter("sun_glow_strength", glow_strength)
-	var weather_source := _get_weather_source(camera.global_position)
 	var storm_occlusion := weather_source.get_weather_sky_occlusion(camera.global_position) if weather_source != null else 0.0
 	_sky_material.set_shader_parameter("storm_occlusion", storm_occlusion)
-	var source := gravity_service.get_nearest_surface(camera.global_position)
 	var water_depth := source.get_water_depth(camera.global_position) if source != null else -INF
 	var sky_occlusion := 1.0 if water_depth > 0.0 else 0.0
 	_sky_material.set_shader_parameter("underwater_strength", sky_occlusion)

@@ -50,9 +50,10 @@ func get_nearest_surface(pos: Vector3) -> PlanetBody:
 		var direction: Vector3 = pos - source.global_position
 		if direction.length_squared() < 0.0001:
 			continue
-		if direction.length() > source.influence_radius:
+		var distance := direction.length()
+		if distance > source.influence_radius:
 			continue
-		var altitude: float = direction.length() - source.get_surface_radius_towards(direction.normalized())
+		var altitude: float = distance - source.get_surface_radius_towards(direction.normalized())
 		if altitude < best_altitude:
 			best_altitude = altitude
 			best = source

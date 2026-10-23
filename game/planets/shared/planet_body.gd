@@ -345,12 +345,11 @@ func get_collider_surface_radius(direction: Vector3) -> float:
 	# float32 compute shader, so they disagree by metres on high frequency
 	# terrain. Placement must use the shape bodies actually collide against.
 	var unit_direction := direction.normalized()
-	var fallback := get_surface_radius_towards(unit_direction)
 	if not _collision_ready or not is_inside_tree():
-		return fallback
+		return get_surface_radius_towards(unit_direction)
 	var space := get_world_3d().direct_space_state
 	if space == null:
-		return fallback
+		return get_surface_radius_towards(unit_direction)
 	# Start clear of the highest peak on deformed bodies.
 	# reach well past twice their nominal radius, and backface_collision would
 	# make a ray that starts inside the mesh report the far wall.
@@ -361,7 +360,7 @@ func get_collider_surface_radius(direction: Vector3) -> float:
 	query.collision_mask = collision_layer
 	var hit := space.intersect_ray(query)
 	if hit.is_empty() or hit.collider != self:
-		return fallback
+		return get_surface_radius_towards(unit_direction)
 	return global_position.distance_to(hit.position)
 
 

@@ -25,6 +25,8 @@ var _storm_lights: Array[OmniLight3D] = []
 var _storm_elapsed := 0.0
 var _storm_visibility := 0.0
 var _storm_states: Array[Dictionary] = []
+var _pair_minimum_angles := PackedFloat64Array()
+var _rock_minimum_angles := PackedFloat64Array()
 
 
 func setup(next_body: PlanetBody) -> void:
@@ -97,6 +99,11 @@ func _initialize_storm_states() -> void:
 		).normalized()
 		state.wander_phase = rng.randf_range(0.0, TAU)
 		_storm_states.append(state)
+	for first in _storm_states:
+		for second in _storm_states:
+			_pair_minimum_angles.append(_storm_minimum_angle(float(first.crown_radius), float(second.crown_radius)))
+		for rock_radius in body.get_landing_rock_radii():
+			_rock_minimum_angles.append(_storm_rock_minimum_angle(float(first.contact_radius), rock_radius))
 
 
 func _make_storm_state(rng: RandomNumberGenerator, direction: Vector3, is_static: bool, width_scale: float, shape_kind: int, state_name: String) -> Dictionary:
@@ -562,6 +569,7 @@ func _update_storm_motion(delta: float) -> void:
 		state.direction = (direction + velocity * delta).normalized()
 		state.velocity = velocity
 		_storm_states[index] = state
+	var rock_directions := body.get_landing_rock_directions()
 	for _iteration in 3:
 		for first_index in _storm_states.size():
 			for second_index in range(first_index + 1, _storm_states.size()):
@@ -571,11 +579,11 @@ func _update_storm_motion(delta: float) -> void:
 			if bool(state.static):
 				continue
 			var direction: Vector3 = state.direction
-			for rock_index in body.get_landing_rock_directions().size():
-				var required := _storm_rock_minimum_angle(float(state.contact_radius), body.get_landing_rock_radii()[rock_index])
-				var angle := direction.angle_to(body.get_landing_rock_directions()[rock_index])
+			for rock_index in rock_directions.size():
+				var required := _rock_minimum_angles[state_index * rock_directions.size() + rock_index]
+				var angle := direction.angle_to(rock_directions[rock_index])
 				if angle < required:
-					direction = _move_direction_away(direction, body.get_landing_rock_directions()[rock_index], required - angle)
+					direction = _move_direction_away(direction, rock_directions[rock_index], required - angle)
 			state.direction = direction
 			_storm_states[state_index] = state
 	for index in _storm_states.size():
@@ -595,7 +603,7 @@ func _enforce_storm_pair_separation(first_index: int, second_index: int) -> void
 	var second: Dictionary = _storm_states[second_index]
 	var first_direction: Vector3 = first.direction
 	var second_direction: Vector3 = second.direction
-	var required := _storm_minimum_angle(float(first.crown_radius), float(second.crown_radius))
+	var required := _pair_minimum_angles[first_index * _storm_states.size() + second_index]
 	var angle := first_direction.angle_to(second_direction)
 	if angle >= required or (bool(first.static) and bool(second.static)):
 		return
