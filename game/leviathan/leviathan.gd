@@ -58,7 +58,7 @@ const FEED_SPEED := 420.0
 const FEED_LEAD := 4000.0
 const END_DISTANCE := -THROAT_DEPTH
 const BLACKOUT_DURATION := 2.5
-const DRAW_DISTANCE := 60000.0
+const DRAW_DISTANCE := START_DISTANCE + BODY_LENGTH + 6000.0
 const ROAR_INTERVAL := 7.5
 # Only a fallback heading: summon() replaces it with one that puts the player
 # between the creature and the sun.
@@ -311,22 +311,10 @@ func _process(delta: float) -> void:
 	var sun := get_tree().get_first_node_in_group("sun") as Sun
 	if sun == null:
 		return
-
-	var presence := presence_at(_elapsed)
-	var distance := distance_at(_elapsed, _feed_distance)
-	var maw_open := maw_open_at(distance)
-	_body_material.set_shader_parameter("presence", presence)
-	_update_rig(presence, maw_open)
-	_update_storm(delta, maw_open)
-	_roar.set_dread(presence)
 	if _state == STATE_FADE_IN and _elapsed > FADE_IN_DURATION:
 		_state = STATE_APPROACH
-
-	var maw_position := sun.global_position + _direction * distance
-	# Aimed down the heading rather than at the sun itself: past the sun the two
-	# stop agreeing, and aiming at it would spin the creature round to face what
-	# it already has in its mouth.
-	_place_body(maw_position, maw_position - _direction * BODY_LENGTH, _up_hint)
+	_roar.set_dread(presence_at(_elapsed))
+	var distance := _advance(delta, sun)
 	_devour(sun)
 	# Whichever the throat closes on first ends the run: the player is on the
 	# dive line, the sun is at the end of it.
@@ -343,6 +331,21 @@ func _process(delta: float) -> void:
 		_shake(pow(closeness, 3.0) * 0.05)
 
 
+func _advance(delta: float, sun: Sun) -> float:
+	var presence := presence_at(_elapsed)
+	var distance := distance_at(_elapsed, _feed_distance)
+	var maw_open := maw_open_at(distance)
+	_body_material.set_shader_parameter("presence", presence)
+	_update_rig(presence, maw_open)
+	_update_storm(delta, maw_open)
+	var maw_position := sun.global_position + _direction * distance
+	# Aimed down the heading rather than at the sun itself: past the sun the two
+	# stop agreeing, and aiming at it would spin the creature round to face what
+	# it already has in its mouth.
+	_place_body(maw_position, maw_position - _direction * BODY_LENGTH, _up_hint)
+	return distance
+
+
 func _update_storm(delta: float, maw_open: float) -> void:
 	_storm_flash = maxf(_storm_flash - delta * (7.0 + _storm_flash * 12.0), 0.0)
 	if maw_open > 0.08:
@@ -350,11 +353,13 @@ func _update_storm(delta: float, maw_open: float) -> void:
 		if _storm_timer <= 0.0:
 			_storm_flash = _storm_rng.randf_range(0.72, 1.0)
 			_storm_timer = _storm_rng.randf_range(0.45, 1.6)
+			_storm_material.set_shader_parameter("bolt_seed", _storm_rng.randf() * 100.0)
 			_roar.thunder(_storm_flash)
 	else:
 		_storm_timer = 0.0
 	# The vortex only exists once there is a mouth to see it through.
 	_storm.visible = maw_open > 0.02
+	_storm_material.set_shader_parameter("storm_time", _elapsed)
 	_storm_material.set_shader_parameter("visibility", maw_open)
 	_storm_material.set_shader_parameter("flash", _storm_flash)
 	_body_material.set_shader_parameter("flash", _storm_flash)
@@ -431,14 +436,7 @@ func _update_blackout(delta: float) -> void:
 		var camera := get_viewport().get_camera_3d()
 		if camera != null:
 			_extend_camera_far(camera)
-		var presence := presence_at(_elapsed)
-		var distance := distance_at(_elapsed, _feed_distance)
-		var maw_open := maw_open_at(distance)
-		_body_material.set_shader_parameter("presence", presence)
-		_update_rig(presence, maw_open)
-		_update_storm(delta, maw_open)
-		var maw_position := sun.global_position + _direction * distance
-		_place_body(maw_position, maw_position - _direction * BODY_LENGTH, _up_hint)
+		_advance(delta, sun)
 	_blackout.color.a = clampf(_blackout_elapsed / BLACKOUT_DURATION, 0.0, 1.0)
 	_roar.set_dread(1.0)
 	if _blackout_elapsed >= BLACKOUT_DURATION:

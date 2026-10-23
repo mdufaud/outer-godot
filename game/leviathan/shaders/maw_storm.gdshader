@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode unshaded, blend_mix, cull_front, depth_draw_never, shadows_disabled, fog_disabled;
+render_mode unshaded, blend_premul_alpha, cull_front, depth_draw_never, depth_test_disabled, shadows_disabled, fog_disabled;
 
 uniform vec3 half_extents = vec3(2500.0, 1700.0, 3000.0);
 uniform float field_scale = 1150.0;
@@ -7,6 +7,9 @@ uniform vec3 cloud_color : source_color = vec3(0.075, 0.030, 0.170);
 uniform vec3 lightning_color : source_color = vec3(0.48, 0.08, 0.82);
 uniform float visibility : hint_range(0.0, 1.0) = 0.0;
 uniform float flash : hint_range(0.0, 1.0) = 0.0;
+// Sequence clock, not TIME: the swirl winds up, so TIME would tie the look to uptime.
+uniform float storm_time = 0.0;
+uniform float bolt_seed = 7.0;
 uniform sampler2D depth_texture : hint_depth_texture, filter_nearest;
 
 varying vec3 local_position;
@@ -56,9 +59,8 @@ void fragment() {
 	float scene_depth = texture(depth_texture, SCREEN_UV).r;
 	vec4 scene_view = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, scene_depth, 1.0);
 	scene_view.xyz /= scene_view.w;
-	vec3 scene_world = (INV_VIEW_MATRIX * vec4(scene_view.xyz, 1.0)).xyz;
-	vec3 scene_local = (inverse(MODEL_MATRIX) * vec4(scene_world, 1.0)).xyz;
-	far_t = min(far_t, distance(scene_local, local_camera));
+	// The box is never scaled, so view distance is local distance.
+	far_t = min(far_t, length(scene_view.xyz));
 	if (far_t <= near_t) {
 		discard;
 	}
@@ -70,7 +72,6 @@ void fragment() {
 	vec3 position = local_camera + direction * near_t + step_vector * jitter;
 	vec3 accumulated = vec3(0.0);
 	float alpha = 0.0;
-	float bolt_seed = floor(TIME * 0.31) + 7.0;
 	for (int index = 0; index < 40; index++) {
 		vec3 shape_position = position / half_extents;
 		float shape = 1.0 - dot(shape_position, shape_position);
@@ -79,7 +80,7 @@ void fragment() {
 		// proportions whatever the maw is scaled to.
 		float radius = length(shape_position.xy);
 		// Swirl faster toward the axis: a tornado, not a rotating slab.
-		float swirl = TIME * 0.85 / (radius + 0.28) - shape_position.z * 1.7;
+		float swirl = storm_time * 0.85 / (radius + 0.28) - shape_position.z * 1.7;
 		float sine = sin(swirl);
 		float cosine = cos(swirl);
 		vec3 twisted = vec3(
@@ -88,7 +89,7 @@ void fragment() {
 			shape_position.z
 		);
 		vec3 metric_position = twisted * (max(half_extents.x, half_extents.z) / field_scale);
-		vec3 advected = metric_position * 1.35 + vec3(0.0, 0.0, -TIME * 0.55);
+		vec3 advected = metric_position * 1.35 + vec3(0.0, 0.0, -storm_time * 0.55);
 		float turbulence = sin_fbm(advected, 4, 0.52, 0.49);
 		// Local +Z runs down the gullet, so the cloud is a wide wall at the lips
 		// narrowing to a throat that swallows the light. The radius is chewed up
@@ -115,7 +116,7 @@ void fragment() {
 	if (alpha < 0.005) {
 		discard;
 	}
-	ALBEDO = accumulated;
-	EMISSION = accumulated * (1.0 + flash * 2.3);
+	// accumulated is already weighted by alpha, hence the premultiplied blend.
+	ALBEDO = accumulated * visibility;
 	ALPHA = alpha * visibility;
 }

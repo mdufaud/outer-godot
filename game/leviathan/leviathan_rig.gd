@@ -14,8 +14,8 @@ const SWIM_FREQUENCY := 0.32
 # body holding slightly under half a wavelength is what reads as a swimming fish
 # rather than a rope being shaken.
 const SWIM_PHASE_LAG := 0.8
-const SWIM_HEAD_YAW := 0.05
-const SWIM_TAIL_YAW := 0.38
+const SWIM_HEAD_YAW := 0.14
+const SWIM_TAIL_YAW := 0.42
 # The tail also lags in the vertical, which keeps the body off a perfectly flat
 # plane and stops the silhouette going to a straight line edge on.
 const SWIM_PITCH := 0.035

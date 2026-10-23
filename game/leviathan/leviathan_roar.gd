@@ -32,6 +32,8 @@ func _ready() -> void:
 	_roar = AudioStreamPlayer.new()
 	_roar.stream = _build_roar_stream()
 	_roar.volume_linear = MAX_ROAR_VOLUME
+	# Roars fire on every bite, so they must overlap instead of cutting each other.
+	_roar.max_polyphony = 3
 	add_child(_roar)
 	_thunder = AudioStreamPlayer.new()
 	_thunder.stream = _build_thunder_stream()

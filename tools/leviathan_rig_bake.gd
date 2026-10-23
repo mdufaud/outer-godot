@@ -30,14 +30,18 @@ const CELL_SIZE := 6.0
 
 # Joint positions down the length axis. The first is the hinge plane, so the head
 # bone and the jaw bone share it and the mouth opens where the mesh already
-# creases. The last sits at the base of the tail fan.
-const SPINE_Z: Array[float] = [50.0, 20.0, -10.0, -45.0, -80.0, -112.0]
+# creases. The skull runs back to z=-62, so every other joint sits behind it in
+# the fins and the swim wave never bends the head.
+const SPINE_Z: Array[float] = [50.0, -62.0, -80.0, -96.0, -108.0, -118.0]
+const SPINE_BLEND := 5.0
 
 # The lantern stalk is a thin spar sticking out past the snout; it gets its own
-# bone so the lure can bob and so the lantern light can ride a BoneAttachment3D.
+# bone so the lure can bob.
 const LURE_START_Z := 100.0
 const LURE_END_Z := 122.0
 const LURE_MAX_X := 12.0
+# The snout reaches the stalk's z too, but only the stalk rises above this.
+const LURE_MIN_Y := 100.0
 
 const BONE_HEAD := 0
 const BONE_JAW := 1
@@ -315,7 +319,7 @@ func _joint_positions(vertices: PackedVector3Array, jaw: PackedFloat32Array) -> 
 	var lure_samples := 0
 	for i in vertices.size():
 		var v := vertices[i]
-		if absf(v.z - LURE_START_Z) > 6.0 or absf(v.x) > LURE_MAX_X:
+		if absf(v.z - LURE_START_Z) > 6.0 or absf(v.x) > LURE_MAX_X or v.y < LURE_MIN_Y:
 			continue
 		lure_total += v.y
 		lure_samples += 1
@@ -326,9 +330,10 @@ func _joint_positions(vertices: PackedVector3Array, jaw: PackedFloat32Array) -> 
 	return {"spine": spine, "jaw": jaw_pivot, "lure": lure_pivot}
 
 
-# Every vertex ends up on the jaw, on the lure stalk, or shared between the two
-# spine joints it lies between. Three influences at most, so the four slots the
-# default vertex format gives are never crowded.
+# Every vertex ends up on the jaw, on the lure stalk, or on the bone of the
+# segment it lies in, crossfading into the next one only within SPINE_BLEND of
+# the joint: a joint must never swing what lies ahead of it. Three influences at
+# most, so the four slots the default vertex format gives are never crowded.
 func _skin_weights(vertices: PackedVector3Array, jaw: PackedFloat32Array, arrays: Array) -> void:
 	var bones := PackedInt32Array()
 	var weights := PackedFloat32Array()
@@ -345,16 +350,11 @@ func _skin_weights(vertices: PackedVector3Array, jaw: PackedFloat32Array, arrays
 		var first := BONE_HEAD
 		var second := BONE_HEAD
 		var blend := 0.0
-		if v.z < SPINE_Z[SPINE_Z.size() - 1]:
-			first = BONE_SPINE_FIRST + SPINE_Z.size() - 2
-			second = first
-		elif v.z < SPINE_Z[0]:
-			for segment in SPINE_Z.size() - 1:
-				if v.z >= SPINE_Z[segment + 1]:
-					first = BONE_HEAD if segment == 0 else BONE_SPINE_FIRST + segment - 1
-					second = BONE_SPINE_FIRST + segment
-					blend = smoothstep(SPINE_Z[segment], SPINE_Z[segment + 1], v.z)
-					break
+		for joint in range(1, SPINE_Z.size()):
+			if v.z <= SPINE_Z[joint] + SPINE_BLEND:
+				first = BONE_HEAD if joint == 1 else BONE_SPINE_FIRST + joint - 2
+				second = BONE_SPINE_FIRST + joint - 1
+				blend = smoothstep(SPINE_Z[joint] + SPINE_BLEND, SPINE_Z[joint] - SPINE_BLEND, v.z)
 
 		var body := (1.0 - jaw_weight) * (1.0 - lure_weight)
 		var base := i * 4
