@@ -4,14 +4,13 @@ extends SceneTree
 #   godot --headless --path . -s tools/orbit_check.gd
 #   HOURS=24 godot --headless --path . -s tools/orbit_check.gd
 # Reports, per body, the min/max distance to the sun and, per pair, the closest
-# surface-to-surface gap reached. A negative gap means a collision: move the
-# body, change its radius, or space the orbits further apart.
+# gap reached between clearance radii (atmosphere, ring and cloud deck
+# included). A negative gap means a collision: move the body, change its
+# radius, or space the orbits further apart.
 
 const CelestialSystem := preload("res://game/celestial/celestial_system.gd")
 const SolarSystemManifestScript := preload("res://game/celestial/solar_system_manifest.gd")
 
-const SUN_RADIUS := 345.0
-const SUN_SURFACE_GRAVITY := 50.0
 const STEP := 1.0 / 120.0
 const SAMPLE_INTERVAL := 60
 
@@ -23,18 +22,19 @@ func _init() -> void:
 
 	var names: Array[StringName] = [&"sun"]
 	var positions: Array[Vector3] = [Vector3.ZERO]
-	var mu: Array[float] = [SUN_SURFACE_GRAVITY * SUN_RADIUS * SUN_RADIUS]
-	var radii: Array[float] = [SUN_RADIUS]
+	var mu: Array[float] = [Main.SUN_SURFACE_GRAVITY * Main.SUN_RADIUS * Main.SUN_RADIUS]
+	var radii: Array[float] = [Main.SUN_RADIUS]
 	var orbit_parents := {}
 	var twin_positions: Array[Vector3] = []
 	var twin_mu: Array[float] = []
 	var twin_radii: Array[float] = []
+	var twins_overlap := false
 
 	for entry in SolarSystemManifestScript.get_entries():
 		var body: PlanetBody = entry.scene.instantiate()
 		var config: PlanetConfig = body.create_planet_config()
-		var radius := config.radius
-		var body_mu := config.surface_gravity * radius * radius
+		var radius := body.get_clearance_radius(config)
+		var body_mu := config.surface_gravity * config.radius * config.radius
 		if not entry.binary_group_id.is_empty():
 			twin_positions.append(entry.initial_position)
 			twin_mu.append(body_mu)
@@ -61,9 +61,10 @@ func _init() -> void:
 		))
 		var separation: float = twin_positions[0].distance_to(twin_positions[1])
 		var pair_gap: float = separation - twin_radii[0] - twin_radii[1]
-		print("twin binary: separation %.1f, fixed surface gap %.1f" % [separation, pair_gap])
+		print("twin binary: separation %.1f, fixed clearance gap %.1f" % [separation, pair_gap])
 		if pair_gap <= 0.0:
 			print("  ERROR: twins overlap at rest")
+			twins_overlap = true
 		orbit_parents[&"twins"] = &"sun"
 
 	var state := CelestialSystem.pack_state(positions)
@@ -103,7 +104,7 @@ func _init() -> void:
 
 	var sun_drift := CelestialSystem.read_state(state, 0).length()
 	print("--- %.1f h simulated, %d bodies, sun drift %.9f ---" % [hours, names.size(), sun_drift])
-	var unstable := sun_drift > 0.000001
+	var unstable := sun_drift > 0.000001 or twins_overlap
 	for i in names.size():
 		var drift: float = 0.0
 		if start_distance[i] > 0.0:
@@ -113,7 +114,7 @@ func _init() -> void:
 		print("%-16s start=%9.1f min=%9.1f max=%9.1f swing=%5.1f%%" % [
 			names[i], start_distance[i], min_solar[i], max_solar[i], drift
 		])
-	print("--- closest surface gaps ---")
+	print("--- closest clearance gaps ---")
 	var keys := min_gap.keys()
 	keys.sort_custom(func(a, b): return min_gap[a] < min_gap[b])
 	for key in keys.slice(0, 8):

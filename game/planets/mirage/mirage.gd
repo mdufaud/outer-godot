@@ -11,6 +11,10 @@ func _ready() -> void:
 	add_child(ring)
 
 
+func get_clearance_radius(planet_config: PlanetConfig) -> float:
+	return maxf(super(planet_config), planet_config.radius * AsteroidRingScript.OUTER_RADIUS_RATIO)
+
+
 func configure_planet(config: PlanetConfig) -> void:
 	config.body_id = &"Mirage"
 	config.shape_profile = ShapeProfileScript.MIRAGE

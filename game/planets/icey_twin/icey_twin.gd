@@ -10,7 +10,7 @@ func configure_planet(config: PlanetConfig) -> void:
 	config.radius = 69.0
 	config.surface_gravity = 10.0
 	config.rng_seed = 114
-	config.ocean.level = -5.52
+	config.ocean.level = config.radius * -0.08
 	config.ocean.shallow_color = Color(0.0, 0.5, 0.43362522)
 	config.ocean.deep_color = Color(0.0, 0.8329468, 1.0)
 	config.ocean.wave_strength = 0.759

@@ -19,8 +19,8 @@ func _init() -> void:
 func _run() -> void:
 	for variant in VariantsScript.build(BODY_ID):
 		ContractScript.run(self, variant.config, report, "Mirage %s" % variant.label)
+		_test_ring(variant.config, "Mirage %s" % variant.label)
 	_test_perturbed_shape()
-	_test_ring()
 	report.finish("Mirage tests", self)
 
 
@@ -38,26 +38,28 @@ func _test_perturbed_shape() -> void:
 	report.expect(not is_equal_approx(mirage.sample_factor(direction), earth.sample_factor(direction)), "Mirage fell back to the Terra profile")
 
 
-func _test_ring() -> void:
-	var config := TestWorldScript.authored_config(BODY_ID)
+func _test_ring(config: PlanetConfig, label: String) -> void:
 	var body := TestWorldScript.spawn_body(self, config)
 	var ring := AsteroidRingScript.new()
 	ring.name = "MirageRing"
 	body.add_child(ring)
 
-	report.expect(AsteroidRingScript.INNER_RADIUS < AsteroidRingScript.OUTER_RADIUS, "The ring turned inside out")
+	report.expect(ring.inner_radius < ring.outer_radius, "%s: the ring turned inside out" % label)
 	report.expect(AsteroidRingScript.DUST_FADE_NEAR < AsteroidRingScript.DUST_FADE_FAR, "The dust band fades in after it fades out")
 	report.expect(AsteroidRingScript.DUST_FADE_FAR <= AsteroidRingScript.ROCK_VISIBILITY_DISTANCE, "The dust band finishes dissolving after the rocks are already gone")
 	var peak := 0.0
 	for direction in TestWorldScript.sphere_directions():
 		peak = maxf(peak, body.get_surface_radius_towards(direction))
-	report.expect(AsteroidRingScript.INNER_RADIUS > peak, "The ring passes through the planet (inner radius %f against a peak of %f)" % [AsteroidRingScript.INNER_RADIUS, peak])
+	report.expect(ring.inner_radius > peak, "%s: the ring passes through the planet (inner radius %f against a peak of %f)" % [label, ring.inner_radius, peak])
+	var mirage: PlanetBody = TestWorldScript.get_entry(BODY_ID).scene.instantiate()
+	report.expect(mirage.get_clearance_radius(config) >= ring.outer_radius, "%s: the clearance radius misses the ring" % label)
+	mirage.free()
 
 	var bands: Array[Node3D] = []
 	for child in ring.get_children():
 		if child is Node3D and String(child.name).begins_with("Band"):
 			bands.append(child)
-	report.expect(bands.size() == AsteroidRingScript.BANDS, "The ring lost bands (%d of %d)" % [bands.size(), AsteroidRingScript.BANDS])
+	report.expect(bands.size() == AsteroidRingScript.BANDS, "%s: the ring lost bands (%d of %d)" % [label, bands.size(), AsteroidRingScript.BANDS])
 
 	# Per-instance placement lives in the rendering server, which the dummy headless renderer does not
 	# store: the debris positions are checked in the GPU tier instead. Counts and shear are here.

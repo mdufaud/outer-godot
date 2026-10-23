@@ -195,6 +195,16 @@ func get_core_radius() -> float:
 	return _core_radius()
 
 
+# Outermost reach of anything the planet carries: what another body must stay clear of.
+func get_clearance_radius(planet_config: PlanetConfig) -> float:
+	var clearance := planet_config.radius
+	if planet_config.atmosphere.enabled:
+		clearance = maxf(clearance, planet_config.radius * (1.0 + planet_config.atmosphere.scale))
+	if planet_config.weather.enabled and planet_config.weather.geometry != null:
+		clearance = maxf(clearance, planet_config.weather.geometry.deck_outer_radius(planet_config.radius + planet_config.ocean.level))
+	return clearance
+
+
 func get_water_depth(position_value: Vector3) -> float:
 	if not has_ocean:
 		return -INF

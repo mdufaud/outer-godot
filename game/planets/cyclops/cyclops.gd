@@ -15,10 +15,10 @@ func configure_planet(config: PlanetConfig) -> void:
 	config.shape_profile = ShapeProfileScript.CYCLOPS
 	config.surface.material_profile = ShapeProfileScript.CYCLOPS
 	config.radius = 145.0
-	config.core_radius = 72.5
+	config.core_radius = config.radius * 0.5
 	config.surface_gravity = 14.0
 	config.rng_seed = 114
-	config.ocean.level = 20.0
+	config.ocean.level = config.radius * (20.0 / 145.0)
 	config.ocean.shallow_color = Color(0.008, 0.065, 0.06)
 	config.ocean.deep_color = Color(0.0015, 0.012, 0.014)
 	config.ocean.wave_strength = 0.9

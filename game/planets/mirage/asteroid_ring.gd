@@ -13,14 +13,18 @@ const ROCK_VARIANTS := 4
 const ROCK_TOPOLOGY := 3
 const BANDS := 4
 const ROCKS_PER_BAND_VARIANT := 30
-const INNER_RADIUS := 78.0
-const OUTER_RADIUS := 132.0
-const BAND_THICKNESS := 4.0
+# Ring span and thickness as multiples of the planet radius, authored on a 34 m Mirage.
+const INNER_RADIUS_RATIO := 78.0 / 34.0
+const OUTER_RADIUS_RATIO := 132.0 / 34.0
+const BAND_THICKNESS_RATIO := 4.0 / 34.0
 # Beyond this the individual rocks are sub-pixel, so only the dust band shows.
 const ROCK_VISIBILITY_DISTANCE := 700.0
 const DUST_FADE_NEAR := 220.0
 const DUST_FADE_FAR := 620.0
 
+var inner_radius := 0.0
+var outer_radius := 0.0
+var band_thickness := 0.0
 var _bands: Array[Node3D] = []
 var _dust: MeshInstance3D
 var _dust_material: ShaderMaterial
@@ -34,13 +38,14 @@ func _ready() -> void:
 	material.metallic_specular = 0.15
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 20873
-	var parent_mu := 0.0
 	var parent := get_parent() as CelestialBody
-	if parent != null:
-		parent_mu = parent.get_gravitational_parameter()
+	inner_radius = parent.radius * INNER_RADIUS_RATIO
+	outer_radius = parent.radius * OUTER_RADIUS_RATIO
+	band_thickness = parent.radius * BAND_THICKNESS_RATIO
+	var parent_mu := parent.get_gravitational_parameter()
 	for band_index in BANDS:
-		var span := (OUTER_RADIUS - INNER_RADIUS) / float(BANDS)
-		var band_inner := INNER_RADIUS + span * float(band_index)
+		var span := (outer_radius - inner_radius) / float(BANDS)
+		var band_inner := inner_radius + span * float(band_index)
 		var band := Node3D.new()
 		band.name = "Band%d" % band_index
 		# Random tilt keeps the ring from reading as four perfect coplanar discs.
@@ -84,7 +89,7 @@ func _build_band_variant(mesh: ArrayMesh, material: StandardMaterial3D, band_inn
 		var angle := rng.randf_range(0.0, TAU)
 		var radius := band_inner + rng.randf_range(0.0, span)
 		# Squaring the sample packs the debris towards the ring plane.
-		var height := BAND_THICKNESS * rng.randf_range(-1.0, 1.0) * rng.randf()
+		var height := band_thickness * rng.randf_range(-1.0, 1.0) * rng.randf()
 		var basis := Basis.from_euler(Vector3(
 			rng.randf_range(0.0, TAU), rng.randf_range(0.0, TAU), rng.randf_range(0.0, TAU)
 		)).scaled(Vector3.ONE * rng.randf_range(0.25, 1.6))
@@ -126,14 +131,14 @@ func _build_rock_meshes() -> Array[ArrayMesh]:
 
 func _build_dust() -> void:
 	var mesh := TorusMesh.new()
-	mesh.inner_radius = INNER_RADIUS
-	mesh.outer_radius = OUTER_RADIUS
+	mesh.inner_radius = inner_radius
+	mesh.outer_radius = outer_radius
 	mesh.rings = 96
 	mesh.ring_segments = 8
 	_dust_material = ShaderMaterial.new()
 	_dust_material.shader = DustRingShader
-	_dust_material.set_shader_parameter("inner_radius", INNER_RADIUS)
-	_dust_material.set_shader_parameter("outer_radius", OUTER_RADIUS)
+	_dust_material.set_shader_parameter("inner_radius", inner_radius)
+	_dust_material.set_shader_parameter("outer_radius", outer_radius)
 	_dust = MeshInstance3D.new()
 	_dust.name = "DustBand"
 	_dust.mesh = mesh

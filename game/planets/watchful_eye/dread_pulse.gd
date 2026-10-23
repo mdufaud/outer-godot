@@ -8,14 +8,14 @@ const SAMPLE_RATE := 22050
 const PULSE_LENGTH := 2.6
 const START_FREQUENCY := 44.0
 const END_FREQUENCY := 31.0
-const FAR_RANGE := 1800.0
-const NEAR_RANGE := 40.0
+const FAR_ALTITUDE := 1779.3
+const NEAR_ALTITUDE := 19.3
 const FAR_INTERVAL := 8.5
 const NEAR_INTERVAL := 5.0
 const MAX_VOLUME := 0.85
 const MIN_AUDIBLE := 0.02
 
-var target: Node3D
+var target: CelestialBody
 
 var _player: AudioStreamPlayer
 var _timer := 0.0
@@ -37,8 +37,8 @@ func _process(delta: float) -> void:
 	var camera := get_viewport().get_camera_3d()
 	if camera == null:
 		return
-	var distance := camera.global_position.distance_to(target.global_position)
-	var raw := clampf((FAR_RANGE - distance) / (FAR_RANGE - NEAR_RANGE), 0.0, 1.0)
+	var altitude := camera.global_position.distance_to(target.global_position) - target.radius
+	var raw := clampf((FAR_ALTITUDE - altitude) / (FAR_ALTITUDE - NEAR_ALTITUDE), 0.0, 1.0)
 	_proximity = move_toward(_proximity, raw * raw, delta * 0.5)
 	if _proximity < MIN_AUDIBLE:
 		_timer = 0.0
