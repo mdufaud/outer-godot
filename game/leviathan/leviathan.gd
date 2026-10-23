@@ -61,7 +61,7 @@ const HOLD_DURATION := REVEAL_START + FADE_IN_DURATION
 # distance left; once that drops to FEED_SPEED the creature creeps the rest of
 # the way, FEED_LEAD before the player, so they watch the maw close in.
 const RUSH_RATE := 0.22
-const FEED_SPEED := 420.0
+const FEED_SPEED := 560.0
 const FEED_LEAD := 4000.0
 const END_DISTANCE := -THROAT_DEPTH
 const BLACKOUT_DURATION := 2.5

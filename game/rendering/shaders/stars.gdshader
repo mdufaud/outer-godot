@@ -26,6 +26,7 @@ bool ray_hits_sphere(vec3 origin, vec3 direction, vec4 sphere) {
 }
 
 #include "res://game/shared/shaders/noise.gdshaderinc"
+#include "res://game/rendering/shaders/sky_backdrop.gdshaderinc"
 
 vec3 star_layer(vec3 dir, float density, float rate, float max_bright, float halo_strength, float twinkle_amt) {
 	vec3 cell = floor(dir * density);
@@ -49,9 +50,7 @@ vec3 star_layer(vec3 dir, float density, float rate, float max_bright, float hal
 
 void sky() {
 	vec3 dir = EYEDIR;
-	vec3 col = vec3(0.002, 0.004, 0.009);
-	float haze = smoothstep(0.42, 0.82, fbm(dir * 2.4 + 17.0, 4, 2.1));
-	col += vec3(0.008, 0.012, 0.022) * haze;
+	vec3 col = sky_backdrop(dir);
 	vec3 stars = star_layer(dir, 360.0, 0.035, 0.18, 0.015, 0.0);
 	stars += star_layer(dir, 150.0, 0.018, 0.32, 0.025, 0.04);
 	stars += star_layer(dir, 62.0, 0.009, 0.58, 0.04, 0.08);

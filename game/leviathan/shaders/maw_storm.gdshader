@@ -100,12 +100,12 @@ void fragment() {
 		float density = clouds * 0.30 * visibility * edge;
 		float bolt_distance = bolt_field(shape_position * 1.35, bolt_seed);
 		float bolt = exp(-bolt_distance * 30.0) * flash * edge;
-		// The throat keeps a standing glow of its own, otherwise the vortex is
-		// only readable during a strike and the maw reads as a plain black hole.
-		float core = pow(clamp(1.0 - radius, 0.0, 1.0), 3.0) * edge * (0.30 + clouds * 1.8);
-		vec3 sample_color = cloud_color * (0.20 + clouds * 3.2)
-			+ lightning_color * (bolt * 8.0 + core * 0.07 + flash * clouds * 0.55);
-		float sample_alpha = clamp(density + core * 0.03 + bolt * 0.36, 0.0, 1.0);
+		// The axis swallows light: a lightless core that the dim clouds spiral
+		// into, so only the strikes show how deep the throat goes.
+		float void_core = pow(clamp(1.0 - radius, 0.0, 1.0), 2.0) * edge;
+		vec3 sample_color = cloud_color * (0.04 + clouds * 1.1)
+			+ lightning_color * (bolt * 8.0 + flash * clouds * 0.55);
+		float sample_alpha = clamp(density + void_core * 0.12 + bolt * 0.36, 0.0, 1.0);
 		accumulated += (1.0 - alpha) * sample_color * sample_alpha;
 		alpha += (1.0 - alpha) * sample_alpha;
 		position += step_vector;

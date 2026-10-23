@@ -32,28 +32,40 @@ uniform float rim_power : hint_range(1.0, 12.0) = 4.4;
 // makes the shape legible is edge: the rim, the lantern and the bolts.
 uniform float dark_albedo : hint_range(0.0, 1.0) = 0.03;
 uniform float lit_albedo : hint_range(0.0, 1.0) = 0.08;
+// The body first arrives as a patch of starless sky, then darkens a little.
+uniform float backdrop_darkness : hint_range(0.0, 1.0) = 0.6;
+
+#include "res://game/shared/shaders/noise.gdshaderinc"
+#include "res://game/rendering/shaders/sky_backdrop.gdshaderinc"
 
 void fragment() {
 	float eye = COLOR.r * eye_glow;
 	float bulb = COLOR.g * lure_glow;
-	// Screen-door fade: no transparent pass for a skinned mesh this size.
+	// The stars behind it go out first (screen door: no transparent pass for a
+	// skinned mesh this size), then the shape surfaces from the dark.
+	float occlude = smoothstep(0.0, 0.3, presence);
+	float shade = smoothstep(0.35, 1.0, presence);
 	float dither = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))));
-	if (eye <= 0.0 && bulb <= 0.0 && dither >= presence) {
+	if (eye <= 0.0 && bulb <= 0.0 && dither >= occlude) {
 		discard;
 	}
+	// ponytail: no sun glow in the backdrop; the reveal happens opposite the sun.
+	vec3 backdrop = sky_backdrop(normalize(mat3(INV_VIEW_MATRIX) * VERTEX))
+		* (1.0 - backdrop_darkness * smoothstep(0.1, 0.5, presence));
 	vec4 base = texture(skin_albedo, UV);
-	ALBEDO = base.rgb * mix(dark_albedo, lit_albedo, presence);
+	ALBEDO = base.rgb * mix(dark_albedo, lit_albedo, presence) * shade;
 	NORMAL_MAP = texture(skin_normal, UV).rgb;
 	NORMAL_MAP_DEPTH = 0.8;
 	ROUGHNESS = 0.74;
 	METALLIC = 0.0;
-	SPECULAR = 0.28;
+	SPECULAR = 0.28 * shade;
 
 	float rim = pow(1.0 - abs(dot(normalize(NORMAL), normalize(VIEW))), rim_power);
 	// The lantern is the one part of it that is its own light source, and it is
 	// the only thing visible while the body is still a hole in the sky.
 	vec3 lantern = texture(skin_glow, UV).rgb;
-	EMISSION = rim_color * rim * (0.22 + presence * 0.92) * (1.0 + flash * 2.1)
+	EMISSION = backdrop * (1.0 - shade)
+		+ rim_color * rim * (0.22 + presence * 0.92) * (1.0 + flash * 2.1) * shade
 		+ lantern * (1.4 + flash * 3.0) * lure_glow
 		+ eye_color * eye * eye_energy;
 }
