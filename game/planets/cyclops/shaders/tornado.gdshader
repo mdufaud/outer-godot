@@ -143,6 +143,10 @@ void fragment() {
 		float strike_time = 0.5 + hash1(event_cell * 19.73 + channel_seed) * 1.5;
 		float local_time = event_cell_time - strike_time;
 		float active = step(0.0, local_time) * (1.0 - step(0.25, local_time));
+		// Same for every pixel: an idle channel adds nothing, so skip its bolt.
+		if (active <= 0.0) {
+			continue;
+		}
 		float bolt_seed = event_cell * 83.17 + channel_seed;
 		float primary_flash = exp(-local_time * mix(22.0, 38.0, hash1(bolt_seed + 9.2)));
 		float echo_delay = mix(0.05, 0.11, hash1(bolt_seed + 13.5));
