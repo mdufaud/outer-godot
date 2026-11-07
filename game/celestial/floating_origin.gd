@@ -24,6 +24,7 @@ func _physics_process(_delta: float) -> void:
 
 
 func _shift(offset: Vector3) -> void:
+	var synced: Array[AnimatableBody3D] = []
 	for node in _root.get_children():
 		if node == self or not (node is Node3D):
 			continue
@@ -35,5 +36,13 @@ func _shift(offset: Vector3) -> void:
 			body.global_transform = transform
 		else:
 			body.global_position += offset
+			if body is AnimatableBody3D and (body as AnimatableBody3D).sync_to_physics:
+				synced.append(body as AnimatableBody3D)
 	total_shift += offset
 	get_tree().call_group("origin_shift_listener", "apply_origin_shift", offset)
+	# sync_to_physics only sends a write to the physics body and keeps the node on its last
+	# stepped transform, so every planet would render a frame away from the shifted camera.
+	for body in synced:
+		body.set_notify_local_transform(false)
+		body.global_position += offset
+		body.set_notify_local_transform(true)
