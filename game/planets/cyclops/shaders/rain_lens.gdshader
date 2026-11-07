@@ -8,39 +8,63 @@ uniform int droplet_layers : hint_range(1, 3) = 3;
 
 #include "res://game/shared/shaders/noise.gdshaderinc"
 
+// A bead sits at most 0.5 * 0.72 + 0.17 from its cell centre, so besides its own cell only the
+// side neighbour a pixel is within 1 - BEAD_REACH of can touch it, never a diagonal one.
+const float BEAD_REACH = 0.53;
+
+float bead_mask(vec2 offset, float radius) {
+	return 1.0 - smoothstep(radius * 0.45, radius, length(offset));
+}
+
+// One cell's bead: x is its mask, yz the central differences of that mask over pixel_step (cell units).
+vec3 droplet_cell(vec2 local, vec2 cell, vec2 neighbour, vec2 pixel_step, float life, float seed) {
+	vec2 identifier = cell + neighbour + seed;
+	float slot = floor(TIME / life + hash2(identifier * 1.37));
+	if (hash2(identifier + slot * 7.31) < 0.74) {
+		return vec3(0.0);
+	}
+	vec2 centre = vec2(hash2(identifier + slot * 3.17), hash2(identifier + slot * 5.91)) - 0.5;
+	float age = fract(TIME / life + hash2(identifier * 1.37));
+	float radius = mix(0.07, 0.17, hash2(identifier + slot * 11.3));
+	radius *= smoothstep(0.0, 0.14, age) * (1.0 - smoothstep(0.7, 1.0, age));
+	vec2 offset = local - neighbour - centre * 0.72;
+	if (radius <= 0.0 || length(offset) >= radius) {
+		return vec3(0.0);
+	}
+	return vec3(bead_mask(offset, radius),
+		bead_mask(offset + vec2(pixel_step.x, 0.0), radius) - bead_mask(offset - vec2(pixel_step.x, 0.0), radius),
+		bead_mask(offset + vec2(0.0, pixel_step.y), radius) - bead_mask(offset - vec2(0.0, pixel_step.y), radius));
+}
+
 // Cell-noise droplets: at most one bead per cell, respawning on its own timer so
 // the pattern reads as falling rain instead of a frozen texture.
-float droplet_layer(vec2 position, float cell_size, float life, float seed) {
+vec3 droplet_layer(vec2 position, vec2 pixel_step, float cell_size, float life, float seed) {
 	vec2 scaled = position / cell_size;
 	vec2 cell = floor(scaled);
 	vec2 local = fract(scaled) - 0.5;
-	float mask = 0.0;
-	for (int offset_x = -1; offset_x <= 1; offset_x++) {
-		for (int offset_y = -1; offset_y <= 1; offset_y++) {
-			vec2 neighbour = vec2(float(offset_x), float(offset_y));
-			vec2 identifier = cell + neighbour + seed;
-			float slot = floor(TIME / life + hash2(identifier * 1.37));
-			if (hash2(identifier + slot * 7.31) < 0.74) {
-				continue;
-			}
-			vec2 centre = vec2(hash2(identifier + slot * 3.17), hash2(identifier + slot * 5.91)) - 0.5;
-			float age = fract(TIME / life + hash2(identifier * 1.37));
-			float radius = mix(0.07, 0.17, hash2(identifier + slot * 11.3));
-			radius *= smoothstep(0.0, 0.14, age) * (1.0 - smoothstep(0.7, 1.0, age));
-			float distance_to_centre = length(local - neighbour - centre * 0.72);
-			mask = max(mask, (1.0 - smoothstep(radius * 0.45, radius, distance_to_centre)));
-		}
+	vec2 local_step = pixel_step / cell_size;
+	vec3 bead = droplet_cell(local, cell, vec2(0.0), local_step, life, seed);
+	if (abs(local.x) > 1.0 - BEAD_REACH) {
+		vec3 side = droplet_cell(local, cell, vec2(sign(local.x), 0.0), local_step, life, seed);
+		bead = side.x > bead.x ? side : bead;
 	}
-	return mask;
+	if (abs(local.y) > 1.0 - BEAD_REACH) {
+		vec3 side = droplet_cell(local, cell, vec2(0.0, sign(local.y)), local_step, life, seed);
+		bead = side.x > bead.x ? side : bead;
+	}
+	return bead;
 }
 
-float droplet_field(vec2 position) {
-	float field = droplet_layer(position, 0.17, 2.3, 0.0);
+// x is the bead mask, yz its central differences over pixel_step on the aspect-corrected screen.
+vec3 droplet_field(vec2 position, vec2 pixel_step) {
+	vec3 field = droplet_layer(position, pixel_step, 0.17, 2.3, 0.0);
 	if (droplet_layers > 1) {
-		field = max(field, droplet_layer(position, 0.27, 3.1, 17.0) * 0.95);
+		vec3 layer = droplet_layer(position, pixel_step, 0.27, 3.1, 17.0) * 0.95;
+		field = layer.x > field.x ? layer : field;
 	}
 	if (droplet_layers > 2) {
-		field = max(field, droplet_layer(position, 0.105, 1.7, 43.0) * 0.72);
+		vec3 layer = droplet_layer(position, pixel_step, 0.105, 1.7, 43.0) * 0.72;
+		field = layer.x > field.x ? layer : field;
 	}
 	return field;
 }
@@ -65,14 +89,14 @@ void fragment() {
 	vec2 position = SCREEN_UV * aspect;
 	vec2 step_size = SCREEN_PIXEL_SIZE * aspect * 2.0;
 
-	float beads = droplet_field(position);
+	vec3 field = droplet_field(position, step_size);
+	float beads = field.x;
 	float trickles = trickle_field(SCREEN_UV) * smoothstep(0.1, 0.8, SCREEN_UV.y);
 	float mask = max(beads, trickles);
 
 	// Fake bead normal from the mask gradient, used to bend the view behind it.
-	float gradient_x = droplet_field(position + vec2(step_size.x, 0.0)) - droplet_field(position - vec2(step_size.x, 0.0));
-	float gradient_y = droplet_field(position + vec2(0.0, step_size.y)) - droplet_field(position - vec2(0.0, step_size.y));
-	vec2 bead_normal = vec2(gradient_x, gradient_y);
+	vec2 bead_normal = field.yz;
+	float gradient_y = bead_normal.y;
 
 	// Real beads invert and magnify what is behind them.
 	vec2 refracted_uv = clamp(
