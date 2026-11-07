@@ -84,6 +84,7 @@ func _boot() -> void:
 	graphics = GraphicsSettingsScript.new()
 	graphics.load_saved()
 	apply_graphics()
+	get_viewport().size_changed.connect(func() -> void: graphics.apply_render_scale(get_viewport()))
 	_log_boot("Creating Sun")
 	sun = SUN_SCENE.instantiate()
 	sun.position = Vector3.ZERO

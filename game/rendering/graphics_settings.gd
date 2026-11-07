@@ -7,7 +7,12 @@ extends RefCounted
 const PATH := "user://graphics.cfg"
 const SECTION := "graphics"
 const OPTIONS: Array[StringName] = [&"preset", &"render_scale", &"anti_aliasing", &"shadows", &"ambient_occlusion", &"indirect_light", &"glow", &"planet_detail", &"vsync", &"fps_limit", &"show_fps"]
-const RENDER_SCALES: Array[float] = [0.5, 0.59, 0.67, 0.77, 1.0, 1.25, 1.5]
+const RENDER_SCALE_AUTO := 0.0
+const RENDER_SCALES: Array[float] = [RENDER_SCALE_AUTO, 0.5, 0.59, 0.67, 0.77, 1.0, 1.25, 1.5]
+# Auto keeps the 3D pass near this many pixels, never above native: an integrated GPU fills a
+# 3K laptop screen at about 17 fps on Cyclops.
+const AUTO_PIXELS_INTEGRATED := 1920 * 1080
+const AUTO_PIXELS_DISCRETE := 3840 * 2160
 const AA_OFF := 0
 const AA_FXAA := 1
 const AA_MSAA_2X := 2
@@ -29,11 +34,11 @@ const PRESET_NAMES: Array[String] = ["Low", "Medium", "High", "Ultra"]
 const PRESETS: Array[Dictionary] = [
 	{"render_scale": 0.67, "anti_aliasing": AA_FXAA, "shadows": SHADOWS_OFF, "ambient_occlusion": AO_OFF, "indirect_light": false, "glow": false, "planet_detail": 0},
 	{"render_scale": 0.77, "anti_aliasing": AA_FXAA, "shadows": SHADOWS_LOW, "ambient_occlusion": AO_ON, "indirect_light": false, "glow": true, "planet_detail": 1},
-	{"render_scale": 1.0, "anti_aliasing": AA_FXAA, "shadows": SHADOWS_HIGH, "ambient_occlusion": AO_ON, "indirect_light": false, "glow": true, "planet_detail": 1},
+	{"render_scale": RENDER_SCALE_AUTO, "anti_aliasing": AA_FXAA, "shadows": SHADOWS_HIGH, "ambient_occlusion": AO_ON, "indirect_light": false, "glow": true, "planet_detail": 1},
 	{"render_scale": 1.25, "anti_aliasing": AA_MSAA_2X, "shadows": SHADOWS_ULTRA, "ambient_occlusion": AO_HIGH, "indirect_light": true, "glow": true, "planet_detail": 1},
 ]
 
-var render_scale := 1.0
+var render_scale := RENDER_SCALE_AUTO
 var anti_aliasing: int = AA_FXAA if ProjectSettings.get_setting("rendering/anti_aliasing/quality/screen_space_aa") != Viewport.SCREEN_SPACE_AA_DISABLED else AA_OFF
 var shadows := SHADOWS_HIGH
 var ambient_occlusion := AO_ON
@@ -45,6 +50,7 @@ var fps_limit := 0
 var show_fps := false
 # Planet meshes are built once at boot, so a detail change waits for the next launch.
 var booted_planet_detail := -1
+var _applied_scale := 1.0
 
 
 func load_saved() -> void:
@@ -86,6 +92,12 @@ static func _nearest_scale(value: float) -> float:
 		if absf(scale - value) < absf(best - value):
 			best = scale
 	return best
+
+
+static func auto_render_scale(size: Vector2i) -> float:
+	var discrete := RenderingServer.get_video_adapter_type() == RenderingDevice.DEVICE_TYPE_DISCRETE_GPU
+	var budget := AUTO_PIXELS_DISCRETE if discrete else AUTO_PIXELS_INTEGRATED
+	return minf(_nearest_scale(sqrt(float(budget) / float(maxi(size.x * size.y, 1)))), 1.0)
 
 
 static func _forward_plus() -> bool:
@@ -158,6 +170,8 @@ func option_text(option: StringName) -> String:
 			var preset := current_preset()
 			return "Preset: %s" % (PRESET_NAMES[preset] if preset >= 0 else "Custom")
 		&"render_scale":
+			if render_scale == RENDER_SCALE_AUTO:
+				return "Scale: Auto (%d%%)" % roundi(_applied_scale * 100.0)
 			return "Scale: %d%%" % roundi(render_scale * 100.0)
 		&"anti_aliasing":
 			return "AA: %s" % AA_NAMES[anti_aliasing]
@@ -185,13 +199,18 @@ static func _on_off(value: bool) -> String:
 	return "On" if value else "Off"
 
 
-func apply(viewport: Viewport, environment: Environment, sun_light: DirectionalLight3D) -> void:
+func apply_render_scale(viewport: Viewport) -> void:
+	_applied_scale = auto_render_scale(Vector2i(viewport.get_visible_rect().size)) if render_scale == RENDER_SCALE_AUTO else render_scale
 	# FSR only upscales; above native the viewport supersamples and filters down.
 	# Bilinear first: FSR with a scale still above 1 warns on every switch.
 	viewport.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
-	viewport.scaling_3d_scale = render_scale
-	if render_scale < 1.0:
+	viewport.scaling_3d_scale = _applied_scale
+	if _applied_scale < 1.0:
 		viewport.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR
+
+
+func apply(viewport: Viewport, environment: Environment, sun_light: DirectionalLight3D) -> void:
+	apply_render_scale(viewport)
 	viewport.screen_space_aa = Viewport.SCREEN_SPACE_AA_FXAA if anti_aliasing == AA_FXAA else Viewport.SCREEN_SPACE_AA_DISABLED
 	viewport.msaa_3d = Viewport.MSAA_4X if anti_aliasing == AA_MSAA_4X else (Viewport.MSAA_2X if anti_aliasing == AA_MSAA_2X else Viewport.MSAA_DISABLED)
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED if vsync else DisplayServer.VSYNC_DISABLED)
