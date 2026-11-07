@@ -393,7 +393,11 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 	)
 	var target_rate := basis * rate
 	if assist_active and rate.x == 0.0 and rate.z == 0.0 and _altitude_above(surface) < LEVEL_ALTITUDE:
-		target_rate += basis.y.cross((global_position - surface.global_position).normalized()) * LEVEL_RATE
+		# Only the roll is levelled: the pitch stays the pilot's, or the nose sinks back to the
+		# horizon every frame the mouse rests.
+		var up := (global_position - surface.global_position).normalized()
+		var nose := -basis.z
+		target_rate += basis.y.cross(up - nose * nose.dot(up)) * LEVEL_RATE
 	if rate != Vector3.ZERO or not ground_contact:
 		_steer(state, target_rate)
 
