@@ -19,6 +19,7 @@ const CelestialSystemScript := preload("res://game/celestial/celestial_system.gd
 const FloatingOriginScript := preload("res://game/celestial/floating_origin.gd")
 const SunFXScript := preload("res://game/sun/sun_fx.gd")
 const LeviathanScript := preload("res://game/leviathan/leviathan.gd")
+const GraphicsSettingsScript := preload("res://game/rendering/graphics_settings.gd")
 
 const SUN_RADIUS := 345.0
 const SUN_SURFACE_GRAVITY := 50.0
@@ -33,6 +34,8 @@ var earth: PlanetBody
 var sun: Sun
 var sun_light: DirectionalLight3D
 var fill_light: DirectionalLight3D
+var graphics: GraphicsSettings
+var _environment: Environment
 var _loading_screen: LoadingScreen
 var _feedback_root: Control
 var _underwater_strength := 0.0
@@ -78,6 +81,9 @@ func _boot() -> void:
 	await get_tree().process_frame
 	_log_boot("Building environment")
 	_build_environment()
+	graphics = GraphicsSettingsScript.new()
+	graphics.load_saved()
+	apply_graphics()
 	_log_boot("Creating Sun")
 	sun = SUN_SCENE.instantiate()
 	sun.position = Vector3.ZERO
@@ -457,6 +463,7 @@ func _build_environment() -> void:
 	env.ssao_intensity = 1.4
 	var world_env := WorldEnvironment.new()
 	world_env.environment = env
+	_environment = env
 	_environment_controller.attach_to(world_env)
 	add_child(world_env)
 	sun_light = DirectionalLight3D.new()
@@ -490,6 +497,10 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func is_loaded() -> bool:
 	return _loaded
+
+
+func apply_graphics() -> void:
+	graphics.apply(get_viewport(), _environment, sun_light)
 
 
 func respawn() -> void:

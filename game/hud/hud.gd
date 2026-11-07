@@ -82,6 +82,8 @@ var _fast_time_button: Button
 var _gravity_button: Button
 var _supernova_button: Button
 var _leviathan_button: Button
+var _graphics_buttons: Dictionary = {}
+var _fps_label: Label
 var _gamepad := false
 var _prompt_action := ""
 var _selected_planet: StringName = &""
@@ -115,6 +117,7 @@ func _rebuild() -> void:
 	for child in _root.get_children():
 		child.queue_free()
 	_planet_buttons.clear()
+	_graphics_buttons.clear()
 	_readout_values.clear()
 	_readout_vertical_row.clear()
 	_build()
@@ -136,6 +139,7 @@ func _build() -> void:
 	_root.add_child(_globe)
 	_build_readout()
 	_build_flash()
+	_build_fps()
 	_build_prompt()
 	_build_hints()
 	_build_menu()
@@ -221,6 +225,17 @@ func _build_readout() -> void:
 	_root.add_child(_readout)
 
 
+func _build_fps() -> void:
+	_fps_label = _label("", 12, MUTED_COLOR)
+	_fps_label.name = "Fps"
+	_fps_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fps_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_fps_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_fps_label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_fps_label.position += Vector2(-18.0, 12.0) * ui_scale
+	_root.add_child(_fps_label)
+
+
 func _build_flash() -> void:
 	_flash = _label(_flash_text, 18)
 	_flash.name = "Flash"
@@ -293,9 +308,15 @@ func _build_menu() -> void:
 	panel.add_theme_stylebox_override("panel", _box(Color(0.02, 0.05, 0.10, 0.94), Color(ACCENT_COLOR, 0.35), 14.0, Vector2(22.0, 18.0)))
 	panel.custom_minimum_size.x = 520.0 * ui_scale
 	center.add_child(panel)
+	# Phones scale the UI up to twice its size: past the screen height the menu scrolls.
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.follow_focus = true
+	panel.add_child(scroll)
 	var column := VBoxContainer.new()
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	column.add_theme_constant_override("separation", _px(10))
-	panel.add_child(column)
+	scroll.add_child(column)
 
 	var header := HBoxContainer.new()
 	header.add_child(_label("OUTER GODOT", 22, ACCENT_COLOR))
@@ -348,8 +369,67 @@ func _build_menu() -> void:
 	events.add_child(_leviathan_button)
 	column.add_child(events)
 
+	var main := get_parent() as Main
+	if main != null and main.graphics != null:
+		column.add_child(_label("GRAPHICS", 11, MUTED_COLOR))
+		var graphics := GridContainer.new()
+		graphics.columns = 3
+		graphics.add_theme_constant_override("h_separation", _px(8))
+		graphics.add_theme_constant_override("v_separation", _px(8))
+		_add_graphics_button(graphics, &"scale", _cycle_render_scale)
+		_add_graphics_button(graphics, &"shadows", _cycle_shadows)
+		_add_graphics_button(graphics, &"ambient_occlusion", func(on: bool) -> void: _change_graphics(func(settings: GraphicsSettings) -> void: settings.ambient_occlusion = on), "Ambient occlusion")
+		_add_graphics_button(graphics, &"glow", func(on: bool) -> void: _change_graphics(func(settings: GraphicsSettings) -> void: settings.glow = on), "Glow")
+		_add_graphics_button(graphics, &"fxaa", func(on: bool) -> void: _change_graphics(func(settings: GraphicsSettings) -> void: settings.fxaa = on), "FXAA")
+		_add_graphics_button(graphics, &"vsync", func(on: bool) -> void: _change_graphics(func(settings: GraphicsSettings) -> void: settings.vsync = on), "VSync")
+		_add_graphics_button(graphics, &"show_fps", func(on: bool) -> void: _change_graphics(func(settings: GraphicsSettings) -> void: settings.show_fps = on), "FPS counter")
+		column.add_child(graphics)
+		_refresh_graphics_buttons()
+
 	column.add_child(_label("Esc · Start · B to close", 11, Color(MUTED_COLOR, 0.7)))
+	scroll.custom_minimum_size.y = minf(column.get_combined_minimum_size().y, get_viewport().get_visible_rect().size.y - 80.0 * ui_scale)
 	_root.add_child(_menu)
+
+
+func _add_graphics_button(grid: GridContainer, key: StringName, action: Callable, text := "") -> void:
+	var button := _menu_button(text, action)
+	button.toggle_mode = not text.is_empty()
+	grid.add_child(button)
+	_graphics_buttons[key] = button
+
+
+func _refresh_graphics_buttons() -> void:
+	var main := get_parent() as Main
+	if main == null or main.graphics == null or _graphics_buttons.is_empty():
+		return
+	var settings := main.graphics
+	(_graphics_buttons[&"scale"] as Button).text = "Render scale: %s" % settings.render_scale_label()
+	(_graphics_buttons[&"shadows"] as Button).text = "Shadows: %s" % GraphicsSettings.SHADOW_NAMES[settings.shadows]
+	(_graphics_buttons[&"ambient_occlusion"] as Button).set_pressed_no_signal(settings.ambient_occlusion)
+	(_graphics_buttons[&"glow"] as Button).set_pressed_no_signal(settings.glow)
+	(_graphics_buttons[&"fxaa"] as Button).set_pressed_no_signal(settings.fxaa)
+	(_graphics_buttons[&"vsync"] as Button).set_pressed_no_signal(settings.vsync)
+	(_graphics_buttons[&"show_fps"] as Button).set_pressed_no_signal(settings.show_fps)
+
+
+func _change_graphics(change: Callable) -> void:
+	var main := get_parent() as Main
+	if main == null or main.graphics == null:
+		return
+	change.call(main.graphics)
+	main.graphics.save()
+	main.apply_graphics()
+	_refresh_graphics_buttons()
+
+
+func _cycle_render_scale() -> void:
+	_change_graphics(func(settings: GraphicsSettings) -> void:
+		settings.render_scale_index = (settings.render_scale_index + 1) % GraphicsSettings.RENDER_SCALES.size())
+
+
+func _cycle_shadows() -> void:
+	_change_graphics(func(settings: GraphicsSettings) -> void:
+		settings.shadows = (settings.shadows + 1) % GraphicsSettings.SHADOW_NAMES.size())
 
 
 func _menu_button(text: String, action: Callable) -> Button:
@@ -515,6 +595,10 @@ func _process(delta: float) -> void:
 	if _flash.visible and Time.get_ticks_msec() >= _flash_until:
 		_flash.visible = false
 	_update_readout()
+	var main := get_parent() as Main
+	_fps_label.visible = main != null and main.graphics != null and main.graphics.show_fps
+	if _fps_label.visible:
+		_fps_label.text = "%d FPS" % Engine.get_frames_per_second()
 	var held := Time.get_ticks_msec() - _hints_shown_at < HINT_HOLD_MS
 	_hints_bar.modulate.a = move_toward(_hints_bar.modulate.a, 1.0 if held else HINT_RESTING_ALPHA, delta * 1.5)
 
