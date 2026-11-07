@@ -25,6 +25,8 @@ var _storm_lights: Array[OmniLight3D] = []
 var _storm_elapsed := 0.0
 var _storm_visibility := 0.0
 var _storm_states: Array[Dictionary] = []
+var _funnel_meshes: Array[ArrayMesh] = []
+var _skirt_meshes: Array[ArrayMesh] = []
 var _pair_minimum_angles := PackedFloat64Array()
 var _rock_minimum_angles := PackedFloat64Array()
 
@@ -72,6 +74,19 @@ func _build_storm_system() -> void:
 	cloud_shell.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(cloud_shell)
 	_initialize_storm_states()
+	# Built once behind the loading screen: these loops take ~140 ms and froze the approach when
+	# they ran on entering the preload radius. Shapes never change, so every reload reuses them.
+	for state in _storm_states:
+		var funnel_height := float(state.funnel_height)
+		var base_radius := float(state.base_radius)
+		var trunk_radius := float(state.trunk_radius)
+		var crown_radius := float(state.crown_radius)
+		var phase := float(state.phase)
+		var shape_kind := int(state.shape_kind)
+		var shape_seed := float(state.shape_seed)
+		var randomize_shape := not bool(state.static)
+		_funnel_meshes.append(_build_tornado_mesh(funnel_height, base_radius, trunk_radius, crown_radius, phase, shape_kind, shape_seed, randomize_shape))
+		_skirt_meshes.append(_build_storm_skirt_mesh(funnel_height, base_radius, trunk_radius, crown_radius, phase, shape_kind, shape_seed, randomize_shape))
 
 
 func _initialize_storm_states() -> void:
@@ -208,9 +223,7 @@ func _build_storm_interior() -> void:
 		orbit.add_child(funnel_root)
 		var base_phase := float(state.phase)
 		var shape_seed := float(state.shape_seed)
-		var randomize_shape := not bool(state.static)
 		var base_radius := float(state.base_radius)
-		var trunk_radius := float(state.trunk_radius)
 		var crown_radius := float(state.crown_radius)
 		var skeleton := Skeleton3D.new()
 		skeleton.name = "TornadoRig"
@@ -225,8 +238,8 @@ func _build_storm_interior() -> void:
 			var bone_height := lerpf(-funnel_height * 0.5, funnel_height * 0.5, float(bone_index) * 0.5)
 			skeleton.set_bone_rest(bone_index, Transform3D(Basis.IDENTITY, Vector3(0.0, bone_height, 0.0)))
 		funnel_root.add_child(skeleton)
-		var funnel_mesh := _build_tornado_mesh(funnel_height, base_radius, trunk_radius, crown_radius, base_phase, shape_kind, shape_seed, randomize_shape)
-		var skirt_mesh := _build_storm_skirt_mesh(funnel_height, base_radius, trunk_radius, crown_radius, base_phase, shape_kind, shape_seed, randomize_shape)
+		var funnel_mesh := _funnel_meshes[index]
+		var skirt_mesh := _skirt_meshes[index]
 		var skin := skeleton.create_skin_from_rest_transforms()
 		for layer in 3:
 			var funnel := MeshInstance3D.new()
