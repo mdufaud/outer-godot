@@ -376,13 +376,10 @@ func _build_menu() -> void:
 		graphics.columns = 3
 		graphics.add_theme_constant_override("h_separation", _px(8))
 		graphics.add_theme_constant_override("v_separation", _px(8))
-		_add_graphics_button(graphics, &"scale", _cycle_render_scale)
-		_add_graphics_button(graphics, &"shadows", _cycle_shadows)
-		_add_graphics_button(graphics, &"ambient_occlusion", func(on: bool) -> void: _change_graphics(func(settings: GraphicsSettings) -> void: settings.ambient_occlusion = on), "Ambient occlusion")
-		_add_graphics_button(graphics, &"glow", func(on: bool) -> void: _change_graphics(func(settings: GraphicsSettings) -> void: settings.glow = on), "Glow")
-		_add_graphics_button(graphics, &"fxaa", func(on: bool) -> void: _change_graphics(func(settings: GraphicsSettings) -> void: settings.fxaa = on), "FXAA")
-		_add_graphics_button(graphics, &"vsync", func(on: bool) -> void: _change_graphics(func(settings: GraphicsSettings) -> void: settings.vsync = on), "VSync")
-		_add_graphics_button(graphics, &"show_fps", func(on: bool) -> void: _change_graphics(func(settings: GraphicsSettings) -> void: settings.show_fps = on), "FPS counter")
+		for option in GraphicsSettings.OPTIONS:
+			var button := _menu_button("", _change_graphics.bind(option))
+			graphics.add_child(button)
+			_graphics_buttons[option] = button
 		column.add_child(graphics)
 		_refresh_graphics_buttons()
 
@@ -391,45 +388,24 @@ func _build_menu() -> void:
 	_root.add_child(_menu)
 
 
-func _add_graphics_button(grid: GridContainer, key: StringName, action: Callable, text := "") -> void:
-	var button := _menu_button(text, action)
-	button.toggle_mode = not text.is_empty()
-	grid.add_child(button)
-	_graphics_buttons[key] = button
-
-
 func _refresh_graphics_buttons() -> void:
-	var main := get_parent() as Main
-	if main == null or main.graphics == null or _graphics_buttons.is_empty():
-		return
-	var settings := main.graphics
-	(_graphics_buttons[&"scale"] as Button).text = "Render scale: %s" % settings.render_scale_label()
-	(_graphics_buttons[&"shadows"] as Button).text = "Shadows: %s" % GraphicsSettings.SHADOW_NAMES[settings.shadows]
-	(_graphics_buttons[&"ambient_occlusion"] as Button).set_pressed_no_signal(settings.ambient_occlusion)
-	(_graphics_buttons[&"glow"] as Button).set_pressed_no_signal(settings.glow)
-	(_graphics_buttons[&"fxaa"] as Button).set_pressed_no_signal(settings.fxaa)
-	(_graphics_buttons[&"vsync"] as Button).set_pressed_no_signal(settings.vsync)
-	(_graphics_buttons[&"show_fps"] as Button).set_pressed_no_signal(settings.show_fps)
-
-
-func _change_graphics(change: Callable) -> void:
 	var main := get_parent() as Main
 	if main == null or main.graphics == null:
 		return
-	change.call(main.graphics)
+	for option in _graphics_buttons:
+		var button: Button = _graphics_buttons[option]
+		button.text = main.graphics.option_text(option)
+		button.disabled = not main.graphics.is_supported(option)
+
+
+func _change_graphics(option: StringName) -> void:
+	var main := get_parent() as Main
+	if main == null or main.graphics == null:
+		return
+	main.graphics.cycle(option)
 	main.graphics.save()
 	main.apply_graphics()
 	_refresh_graphics_buttons()
-
-
-func _cycle_render_scale() -> void:
-	_change_graphics(func(settings: GraphicsSettings) -> void:
-		settings.render_scale_index = (settings.render_scale_index + 1) % GraphicsSettings.RENDER_SCALES.size())
-
-
-func _cycle_shadows() -> void:
-	_change_graphics(func(settings: GraphicsSettings) -> void:
-		settings.shadows = (settings.shadows + 1) % GraphicsSettings.SHADOW_NAMES.size())
 
 
 func _menu_button(text: String, action: Callable) -> Button:

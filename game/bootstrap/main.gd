@@ -429,7 +429,7 @@ func _spawn_body(entry: CelestialEntry) -> PlanetBody:
 	body.name = String(entry.body_id)
 	var requested_quality := OS.get_environment("PLANET_QUALITY")
 	if requested_quality.is_empty():
-		requested_quality = "mobile_low" if RenderingServer.get_current_rendering_method() == "mobile" else "desktop_high"
+		requested_quality = "mobile_low" if RenderingServer.get_current_rendering_method() == "mobile" else String(graphics.planet_profile())
 	if requested_quality not in ["desktop_high", "desktop_medium", "mobile_low"]:
 		requested_quality = "desktop_high"
 	body.quality_override = StringName(requested_quality)
