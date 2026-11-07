@@ -11,6 +11,7 @@ const SAMPLE_FRAMES := 180
 const TRIP_SEGMENT_FRAMES := 120
 const TRIP_MAX_SEGMENTS := 30
 const VARIANTS: Array[StringName] = [&"base", &"full_scale",&"no_ocean", &"no_atmosphere", &"no_effects", &"no_shadows", &"no_ssao", &"no_glow", &"half_scale", &"no_sky", &"no_storms", &"no_cloud_shell", &"no_rain", &"no_hud", &"no_terrain", &"no_fxaa", &"bare"]
+const SURVEY_VARIANTS: Array[StringName] = [&"base", &"no_ocean", &"no_atmosphere", &"no_shadows", &"no_ssao", &"no_glow", &"no_sky", &"no_cloud_shell", &"no_comet", &"half_scale", &"auto_scale"]
 const COMPUTE_SHADERS: Array[String] = [
 	"res://game/planets/shared/shaders/planet_height.comp",
 	"res://game/planets/shared/shaders/planet_perturb.comp",
@@ -96,6 +97,13 @@ func _run() -> void:
 		if child is CyclopsStorms:
 			_storms = child as CyclopsStorms
 	await _ticks(120)
+	# PROBE_SCENE=planets walks every body at full scale and times the storm build instead.
+	if OS.get_environment("PROBE_SCENE") == "planets":
+		await _survey_planets()
+		await _time_storm_build(cyclops)
+		print("[probe] done")
+		quit(0)
+		return
 	# PROBE_SCENE=cyclops_walk skips the trip and the space views.
 	var walk_only := OS.get_environment("PROBE_SCENE") == "cyclops_walk"
 	if not walk_only:
@@ -112,6 +120,51 @@ func _run() -> void:
 		await _bisect_view("space_to_cyclops", cyclops, PI)
 	print("[probe] done")
 	quit(0)
+
+
+# Full scale keeps the GPU above the 60 Hz cap of the virtual display, where its timings hold.
+func _survey_planets() -> void:
+	# PROBE_BODIES=Cyclops,Terra limits the survey.
+	var only := OS.get_environment("PROBE_BODIES").split(",", false)
+	for body_id in main._bodies_by_id.keys():
+		if not only.is_empty() and String(body_id) not in only:
+			continue
+		var body := main.get_body(body_id)
+		main.spawn_on_planet(body)
+		await _ticks(240)
+		main.player.camera.make_current()
+		for variant in SURVEY_VARIANTS:
+			_apply_variant(variant)
+			if variant != &"half_scale" and variant != &"auto_scale":
+				root.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
+				root.scaling_3d_scale = 1.0
+			await _ticks(WARMUP_FRAMES)
+			_print_row("%s %s" % [body_id, variant], await _sample(SAMPLE_FRAMES))
+		_apply_variant(&"base")
+
+
+func _time_storm_build(cyclops: PlanetBody) -> void:
+	main.spawn_on_planet(cyclops)
+	await _ticks(240)
+	main.player.camera.make_current()
+	for attempt in 3:
+		_storms._clear_storm_interior()
+		var start := Time.get_ticks_usec()
+		for state in _storms._storm_states:
+			_storms._build_tornado_mesh(float(state.funnel_height), float(state.base_radius), float(state.trunk_radius), float(state.crown_radius), float(state.phase), int(state.shape_kind), float(state.shape_seed), not bool(state.static))
+			_storms._build_storm_skirt_mesh(float(state.funnel_height), float(state.base_radius), float(state.trunk_radius), float(state.crown_radius), float(state.phase), int(state.shape_kind), float(state.shape_seed), not bool(state.static))
+		var meshes_ms := float(Time.get_ticks_usec() - start) / 1000.0
+		start = Time.get_ticks_usec()
+		_storms._build_storm_interior()
+		var build_ms := float(Time.get_ticks_usec() - start) / 1000.0
+		var frames := PackedFloat64Array()
+		var last := Time.get_ticks_usec()
+		for _frame in 4:
+			await process_frame
+			frames.append(float(Time.get_ticks_usec() - last) / 1000.0)
+			last = Time.get_ticks_usec()
+		print("[probe] storm build %d: meshes alone %.1f ms, full interior %.1f ms, next frames %s ms" % [attempt, meshes_ms, build_ms, frames])
+		await _ticks(60)
 
 
 func _measure_shader_compiles() -> void:
@@ -189,6 +242,9 @@ func _apply_variant(variant: StringName) -> void:
 	main._feedback_root.visible = variant != &"no_rain" and variant != &"bare"
 	(get_first_node_in_group("hud") as Hud).visible = variant != &"no_hud" and variant != &"bare"
 	main.get_body(&"Cyclops")._terrain.visible = variant != &"no_terrain"
+	for child in main.get_body(&"Watchful Eye").get_children():
+		if child is CometTrail:
+			(child as CometTrail).visible = variant != &"no_comet"
 	if variant == &"no_fxaa":
 		root.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED
 	if variant == &"bare":
