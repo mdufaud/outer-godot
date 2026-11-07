@@ -192,6 +192,7 @@ func _render_callback(callback_type: int, render_data: RenderData) -> void:
 
 	var pass_count := passes.size() / 2
 	var reading_color := true
+	rendering_device.capture_timestamp("planet_effects_start")
 	var command_list := rendering_device.compute_list_begin()
 	for pass_index in pass_count:
 		var kind := passes[pass_index * 2]
@@ -229,6 +230,7 @@ func _render_callback(callback_type: int, render_data: RenderData) -> void:
 		rendering_device.compute_list_dispatch(command_list, groups_x, groups_y, 1)
 		rendering_device.compute_list_add_barrier(command_list)
 	rendering_device.compute_list_end()
+	rendering_device.capture_timestamp("planet_effects_end")
 
 
 func _build_push_constant(inverse_view_projection: Projection, camera_position: Vector3, time: float, size: Vector2i, body_index: int) -> PackedByteArray:

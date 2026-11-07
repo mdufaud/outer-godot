@@ -304,9 +304,7 @@ func _initialize_render() -> void:
 func _shared_pipeline(path: String) -> Dictionary:
 	if _shared_pipelines.has(path):
 		return _shared_pipelines[path]
-	var source := RDShaderSource.new()
-	source.source_compute = FileAccess.get_file_as_string(path)
-	var spirv := _rd.shader_compile_spirv_from_source(source, true)
+	var spirv := ShaderCache.compile(_rd, path.get_file().get_basename(), FileAccess.get_file_as_string(path))
 	if not spirv.compile_error_compute.is_empty():
 		return {"error": spirv.compile_error_compute}
 	var shader := _rd.shader_create_from_spirv(spirv)

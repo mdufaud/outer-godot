@@ -57,9 +57,7 @@ func _initialize_render(atmosphere_radius_ratio: float, density_falloff: float) 
 		return
 	if not _shared_shader.is_valid():
 		_set_status("compiling compute shader")
-		var source := RDShaderSource.new()
-		source.source_compute = FileAccess.get_file_as_string(SHADER_PATH)
-		var spirv := _rendering_device.shader_compile_spirv_from_source(source, true)
+		var spirv := ShaderCache.compile(_rendering_device, "atmosphere_lut", FileAccess.get_file_as_string(SHADER_PATH))
 		if not spirv.compile_error_compute.is_empty():
 			push_error(spirv.compile_error_compute)
 			_set_status("failed", spirv.compile_error_compute)
