@@ -17,7 +17,7 @@ const BACK_MARGIN_SCALE := 4.0
 # Box walls sit well outside the cone envelope, which is soft-edged.
 const BOX_PADDING := 1.5
 const VELOCITY_BEND := 0.22
-const DESKTOP_STEPS := 32
+const DESKTOP_STEPS := 16
 const TOUCH_STEPS := 18
 
 var target: CelestialBody
